@@ -17,10 +17,14 @@ public actor SwiftDataSessionRepository: SessionRepository {
     }
 
     public static func production() throws -> SwiftDataSessionRepository {
-        SwiftDataSessionRepository(
-            modelContainer: ModelContainer(for: DryFireVisionPersistenceSchema.schema),
-            poseAssetStore: FilePoseAssetStore.applicationSupportStore(),
-            mediaAssetStore: FileMediaAssetStore.applicationSupportStore()
+        let modelContainer = try ModelContainer(for: DryFireVisionPersistenceSchema.schema)
+        let poseAssetStore = try FilePoseAssetStore.applicationSupportStore()
+        let mediaAssetStore = try FileMediaAssetStore.applicationSupportStore()
+
+        return SwiftDataSessionRepository(
+            modelContainer: modelContainer,
+            poseAssetStore: poseAssetStore,
+            mediaAssetStore: mediaAssetStore
         )
     }
 

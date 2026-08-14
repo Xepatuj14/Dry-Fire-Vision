@@ -62,7 +62,7 @@ public struct DependencyContainer: Sendable {
             let fileMediaAssetStore = try FileMediaAssetStore.applicationSupportStore()
             poseAssetStore = filePoseAssetStore
             let swiftDataSessionRepository = SwiftDataSessionRepository(
-                modelContainer: ModelContainer(for: DryFireVisionPersistenceSchema.schema),
+                modelContainer: try ModelContainer(for: DryFireVisionPersistenceSchema.schema),
                 poseAssetStore: filePoseAssetStore,
                 mediaAssetStore: fileMediaAssetStore
             )
