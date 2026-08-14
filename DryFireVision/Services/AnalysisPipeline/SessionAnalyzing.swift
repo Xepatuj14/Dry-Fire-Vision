@@ -220,6 +220,8 @@ public struct SessionAnalysisPipeline: SessionAnalyzing {
             return .unusableCalibration
         case .insufficientPoseData:
             return .insufficientPoseData
+        case .insufficientSignalCoverage:
+            return .insufficientPoseData
         case .invalidTimestampSequence:
             return .invalidRecording
         }
