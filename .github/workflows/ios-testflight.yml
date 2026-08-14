@@ -1,0 +1,327 @@
+name: iOS Build and TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_to_testflight:
+        description: "Upload the exported IPA to App Store Connect/TestFlight"
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Archive iOS app
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      PROJECT_PATH: DryFireVision.xcodeproj
+      SCHEME_NAME: DryFireVision
+      APP_TARGET: DryFireVision
+      CONFIGURATION: Release
+      ARCHIVE_PATH: ${{ github.workspace }}/build/DryFireVision.xcarchive
+      EXPORT_PATH: ${{ github.workspace }}/build/export
+      EXPORT_OPTIONS_PATH: ${{ runner.temp }}/ExportOptions.plist
+      UPLOAD_TO_TESTFLIGHT: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_to_testflight == true && 'true' || 'false' }}
+      DFV_BUNDLE_IDENTIFIER: ${{ secrets.DFV_BUNDLE_IDENTIFIER }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+      P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+      BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+      DFV_PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.DFV_PROVISIONING_PROFILE_SPECIFIER }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+      APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+      APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select newest stable Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Available Xcode installations:"
+          ls -1 /Applications | grep '^Xcode' || true
+          latest_xcode="$(find /Applications -maxdepth 1 -name 'Xcode*.app' -type d | sort | tail -n 1)"
+          if [[ -z "$latest_xcode" ]]; then
+            echo "::error::No Xcode installation found on runner."
+            exit 1
+          fi
+          sudo xcode-select -s "$latest_xcode/Contents/Developer"
+          echo "Selected Xcode: $latest_xcode"
+
+      - name: macOS and Xcode diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          echo "macOS version:"
+          sw_vers
+          echo "Xcode version:"
+          xcodebuild -version
+          echo "Swift version:"
+          swift --version
+          echo "Repository root: $PWD"
+          echo "Available shared schemes:"
+          xcodebuild -list -project "$PROJECT_PATH" | tee build/xcodebuild-list.txt
+
+      - name: Validate project, scheme, resources, and signing inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_files=(
+            "$PROJECT_PATH/project.pbxproj"
+            "$PROJECT_PATH/xcshareddata/xcschemes/$SCHEME_NAME.xcscheme"
+            "DryFireVision/Resources/Assets.xcassets/Contents.json"
+            "DryFireVision/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json"
+          )
+          for path in "${required_files[@]}"; do
+            if [[ ! -e "$path" ]]; then
+              echo "::error::Required file or directory is missing: $path"
+              exit 1
+            fi
+          done
+
+          if ! grep -Eq "^[[:space:]]+$SCHEME_NAME$" build/xcodebuild-list.txt; then
+            echo "::error::Expected shared scheme '$SCHEME_NAME' was not listed by xcodebuild."
+            exit 1
+          fi
+          if ! grep -q "name = $APP_TARGET;" "$PROJECT_PATH/project.pbxproj"; then
+            echo "::error::Expected app target '$APP_TARGET' was not found in project.pbxproj."
+            exit 1
+          fi
+          if ! grep -q "IPHONEOS_DEPLOYMENT_TARGET = 17.0;" "$PROJECT_PATH/project.pbxproj"; then
+            echo "::error::Expected iOS deployment target 17.0 was not found."
+            exit 1
+          fi
+          if ! grep -q "GENERATE_INFOPLIST_FILE = YES;" "$PROJECT_PATH/project.pbxproj"; then
+            echo "::error::Generated Info.plist build setting is not enabled."
+            exit 1
+          fi
+          if ! grep -q "INFOPLIST_KEY_NSCameraUsageDescription" "$PROJECT_PATH/project.pbxproj"; then
+            echo "::error::Camera usage description is missing."
+            exit 1
+          fi
+          if ! grep -q "INFOPLIST_KEY_NSMicrophoneUsageDescription" "$PROJECT_PATH/project.pbxproj"; then
+            echo "::error::Microphone usage description is missing."
+            exit 1
+          fi
+
+          required_secret_names=(
+            DFV_BUNDLE_IDENTIFIER
+            APPLE_TEAM_ID
+            BUILD_CERTIFICATE_BASE64
+            P12_PASSWORD
+            BUILD_PROVISION_PROFILE_BASE64
+            DFV_PROVISIONING_PROFILE_SPECIFIER
+            KEYCHAIN_PASSWORD
+          )
+          for name in "${required_secret_names[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Required signing secret '$name' is not configured."
+              exit 1
+            fi
+          done
+
+          if [[ "$UPLOAD_TO_TESTFLIGHT" == "true" ]]; then
+            upload_secret_names=(
+              APPSTORE_API_KEY_ID
+              APPSTORE_ISSUER_ID
+              APPSTORE_API_PRIVATE_KEY
+            )
+            for name in "${upload_secret_names[@]}"; do
+              if [[ -z "${!name:-}" ]]; then
+                echo "::error::TestFlight upload requested, but secret '$name' is not configured."
+                exit 1
+              fi
+            done
+          fi
+
+      - name: Install signing certificate and provisioning profile
+        shell: bash
+        env:
+          CERTIFICATE_PATH: ${{ runner.temp }}/build_certificate.p12
+          PROVISION_PROFILE_PATH: ${{ runner.temp }}/build_profile.mobileprovision
+          KEYCHAIN_PATH: ${{ runner.temp }}/dryfirevision-signing.keychain-db
+        run: |
+          set -euo pipefail
+          printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          printf '%s' "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode > "$PROVISION_PROFILE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed s/\"//g)
+
+          profile_plist="$RUNNER_TEMP/profile.plist"
+          security cms -D -i "$PROVISION_PROFILE_PATH" > "$profile_plist"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$profile_plist")"
+          profile_name="$(/usr/libexec/PlistBuddy -c 'Print Name' "$profile_plist")"
+          profile_app_id="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$profile_plist")"
+          profile_team_id="$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' "$profile_plist")"
+
+          if [[ "$profile_team_id" != "$APPLE_TEAM_ID" ]]; then
+            echo "::error::Provisioning profile team identifier does not match APPLE_TEAM_ID."
+            exit 1
+          fi
+          if [[ "$profile_app_id" != "$APPLE_TEAM_ID.$DFV_BUNDLE_IDENTIFIER" ]]; then
+            echo "::error::Provisioning profile application identifier does not match APPLE_TEAM_ID and DFV_BUNDLE_IDENTIFIER."
+            exit 1
+          fi
+          if [[ "$profile_name" != "$DFV_PROVISIONING_PROFILE_SPECIFIER" ]]; then
+            echo "::error::Provisioning profile name does not match DFV_PROVISIONING_PROFILE_SPECIFIER."
+            exit 1
+          fi
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROVISION_PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          echo "Installed provisioning profile UUID: $profile_uuid"
+
+      - name: Run Swift package tests when available
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee build/swift-test.log
+
+      - name: Archive
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME_NAME" \
+            -configuration "$CONFIGURATION" \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            DFV_BUNDLE_IDENTIFIER="$DFV_BUNDLE_IDENTIFIER" \
+            APPLE_TEAM_ID="$APPLE_TEAM_ID" \
+            DFV_PROVISIONING_PROFILE_SPECIFIER="$DFV_PROVISIONING_PROFILE_SPECIFIER" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            archive 2>&1 | tee build/xcodebuild-archive.log
+
+      - name: Generate ExportOptions.plist
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$EXPORT_OPTIONS_PATH" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>$APPLE_TEAM_ID</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$DFV_BUNDLE_IDENTIFIER</key>
+              <string>$DFV_PROVISIONING_PROFILE_SPECIFIER</string>
+            </dict>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Export signed IPA
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$EXPORT_PATH"
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist "$EXPORT_OPTIONS_PATH" 2>&1 | tee build/xcodebuild-export.log
+
+          mapfile -t ipa_files < <(find "$EXPORT_PATH" -maxdepth 1 -name '*.ipa' -type f)
+          if [[ "${#ipa_files[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one IPA in $EXPORT_PATH, found ${#ipa_files[@]}."
+            exit 1
+          fi
+          ipa_path="${ipa_files[0]}"
+          ipa_size="$(du -h "$ipa_path" | awk '{print $1}')"
+          echo "IPA path: $ipa_path"
+          echo "IPA size: $ipa_size"
+          echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DryFireVision-iOS-${{ github.run_number }}
+          path: |
+            build/export/*.ipa
+            build/xcodebuild-list.txt
+            build/swift-test.log
+            build/xcodebuild-archive.log
+            build/xcodebuild-export.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Prepare App Store Connect API key
+        if: ${{ env.UPLOAD_TO_TESTFLIGHT == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          appstore_key_dir="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$appstore_key_dir"
+          appstore_key_path="$appstore_key_dir/AuthKey_${APPSTORE_API_KEY_ID}.p8"
+          printf '%s' "$APPSTORE_API_PRIVATE_KEY" > "$appstore_key_path"
+          chmod 600 "$appstore_key_path"
+          echo "APPSTORE_KEY_PATH=$appstore_key_path" >> "$GITHUB_ENV"
+
+      - name: Upload IPA to App Store Connect
+        if: ${{ env.UPLOAD_TO_TESTFLIGHT == 'true' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          xcrun altool \
+            --upload-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$APPSTORE_API_KEY_ID" \
+            --apiIssuer "$APPSTORE_ISSUER_ID" 2>&1 | tee build/appstore-upload.log
+
+      - name: Upload TestFlight log artifact
+        if: ${{ always() && env.UPLOAD_TO_TESTFLIGHT == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: DryFireVision-TestFlight-Upload-${{ github.run_number }}
+          path: build/appstore-upload.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up signing and upload credentials
+        if: always()
+        shell: bash
+        env:
+          CERTIFICATE_PATH: ${{ runner.temp }}/build_certificate.p12
+          PROVISION_PROFILE_PATH: ${{ runner.temp }}/build_profile.mobileprovision
+          KEYCHAIN_PATH: ${{ runner.temp }}/dryfirevision-signing.keychain-db
+        run: |
+          set +e
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null
+          rm -f "$CERTIFICATE_PATH"
+          rm -f "$PROVISION_PROFILE_PATH"
+          rm -f "$RUNNER_TEMP/profile.plist"
+          rm -f "$EXPORT_OPTIONS_PATH"
+          rm -rf "$HOME/.appstoreconnect/private_keys"

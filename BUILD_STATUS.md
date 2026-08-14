@@ -2,6 +2,94 @@
 
 ## Current milestone
 
+GitHub Actions Native iOS CI / TestFlight Pipeline.
+
+## Infrastructure milestone: GitHub Actions Native iOS CI / TestFlight Pipeline
+
+- Created `.github/workflows/ios-testflight.yml`.
+- Workflow runner image is `macos-15`.
+- Workflow triggers are manual `workflow_dispatch` with `upload_to_testflight` defaulting to `false`, plus `push` to `main` for build validation.
+- Workflow uses `actions/checkout@v4` and `actions/upload-artifact@v4`.
+- Workflow permissions are explicitly limited to `contents: read`.
+- The workflow lists available Xcode installations and selects the newest available Xcode on the runner.
+- Project/scheme are `DryFireVision.xcodeproj` and `DryFireVision`; application target is `DryFireVision`.
+- Archive command uses generic iOS device destination, `Release`, `CURRENT_PROJECT_VERSION=$GITHUB_RUN_NUMBER`, and CI-supplied `DFV_BUNDLE_IDENTIFIER`, `APPLE_TEAM_ID`, and `DFV_PROVISIONING_PROFILE_SPECIFIER`.
+- Export uses a dynamically generated CI-only `ExportOptions.plist` with `method = app-store-connect`, manual signing, and bundle-ID-to-profile mapping.
+- Exported IPA is expected under `build/export/`.
+- Build artifact is named `DryFireVision-iOS-${{ github.run_number }}` and includes the IPA plus useful build logs.
+- TestFlight upload is gated behind manual `upload_to_testflight = true` and uses `xcrun altool` with App Store Connect API key authentication.
+- Required signing/upload secret names are documented: `DFV_BUNDLE_IDENTIFIER`, `APPLE_TEAM_ID`, `BUILD_CERTIFICATE_BASE64`, `P12_PASSWORD`, `BUILD_PROVISION_PROFILE_BASE64`, `DFV_PROVISIONING_PROFILE_SPECIFIER`, `KEYCHAIN_PASSWORD`, `APPSTORE_API_KEY_ID`, `APPSTORE_ISSUER_ID`, and `APPSTORE_API_PRIVATE_KEY`.
+- The workflow installs signing assets only into temporary runner locations/keychains and cleans temporary certificate, profile, keychain, ExportOptions, and App Store Connect key files in an `always()` cleanup step.
+- `docs/IOS_CI_BUILD.md` now documents manual run instructions, build-only mode, build+TestFlight mode, artifact naming/location, secret checklist, signing/profile installation, export strategy, troubleshooting, and the Windows-to-GitHub-to-macOS handoff.
+
+Checks run in the Windows environment:
+
+- Read Document 07 engineering guidance, `docs/IOS_CI_BUILD.md`, `BUILD_STATUS.md`, `.gitignore`, `DryFireVision.xcodeproj`, and the shared scheme.
+- Confirmed `AGENTS.md` is not present.
+- Inspected project build settings for bundle identifier indirection, signing placeholders, generated Info.plist, iOS 17.0 deployment target, camera/microphone usage descriptions, AppIcon setting, versions, app target, and product type.
+- Inspected shared scheme for build/archive support.
+
+Checks requiring GitHub macOS runner:
+
+- YAML execution by GitHub Actions.
+- Xcode project loading with the selected macOS/Xcode image.
+- `xcodebuild -list`, `swift test`, archive, export, and artifact upload.
+- Certificate/profile import, manual code signing, App Store Connect API-key authentication, and TestFlight upload.
+
+Unresolved CI/TestFlight prerequisites:
+
+- Repository secrets must be configured.
+- The `DFV_BUNDLE_IDENTIFIER` secret should be set to the approved value `com.clarkiioutdoors.dryfirevision`.
+- CI signing certificate and provisioning profile must match the Apple team, bundle identifier, and profile specifier.
+- A temporary development AppIcon image exists for CI asset compilation; final App Store-ready AppIcon artwork remains required before release.
+- The first GitHub macOS run has not yet validated archive/export/TestFlight.
+
+No Dry Fire product behavior, Live Fire behavior, analysis algorithms, UX flows, persistence schema, or domain version semantics were changed.
+
+## Infrastructure milestone: Native iOS Distribution Packaging
+
+- Created `DryFireVision.xcodeproj` for the production native Swift/SwiftUI iOS application.
+- Created application target `DryFireVision` and shared scheme `DryFireVision`.
+- The target uses `DryFireVision/App/DryFireVisionApp.swift` as the only `@main` app entry point.
+- The Xcode project uses Xcode 16 file-system synchronized groups so the existing native Swift source tree is the app target source root without duplicating or relocating production code.
+- Deployment target is iOS 17.0, matching the Swift package platform decision.
+- Bundle identifier is centralized as `PRODUCT_BUNDLE_IDENTIFIER = $(DFV_BUNDLE_IDENTIFIER)`; the approved value to supply in CI is `com.clarkiioutdoors.dryfirevision`.
+- Application versions are configured with `MARKETING_VERSION = 1.0` and `CURRENT_PROJECT_VERSION = 1`; domain analysis/configuration/schema versions were not changed.
+- Info.plist is generated from build settings with camera and microphone usage descriptions only.
+- Created `DryFireVision/Resources/Assets.xcassets` and `AppIcon.appiconset` with a temporary development icon; final AppIcon artwork remains a release prerequisite.
+- No special app entitlements are currently required or configured for camera, microphone, AVFoundation, Vision, SwiftData, or local file storage.
+- Signing is prepared for CI-supplied manual signing values using `APPLE_TEAM_ID`, `DFV_PROVISIONING_PROFILE_SPECIFIER`, and externally supplied certificates/profiles/secrets.
+- `Package.swift` remains in place for deterministic package-oriented tests. The app target directly compiles the production SwiftUI/source tree through the Xcode project to avoid a packaging-driven architecture rewrite.
+- Created `docs/IOS_CI_BUILD.md` with project path, scheme, target, deployment target, Info.plist strategy, asset catalog status, signing expectations, and the macOS archive command.
+- Updated `.gitignore` to exclude archives, IPA exports, provisioning profiles, signing certificates, App Store Connect private keys, and local secret config files.
+
+Checks run in the Windows environment:
+
+- Read Document 07 engineering guidelines, current `BUILD_STATUS.md`, `Package.swift`, and the native SwiftUI source tree.
+- Confirmed `AGENTS.md` is not present.
+- Searched production and test source for `@main`, AVFoundation, Vision, SwiftData, camera/microphone permission usage, and speculative entitlement requirements.
+- Confirmed there is a single production `@main` entry point.
+- Confirmed test sources remain under `Tests/` and are not part of the app target's synchronized production source root.
+- Parsed the shared scheme as XML and the asset catalog metadata as JSON.
+- Confirmed `swift` and `xcodebuild` are not available in the current Windows environment, so Swift tests and Xcode archive validation could not be run locally.
+
+Checks requiring macOS/Xcode:
+
+- `xcodebuild archive` for `DryFireVision.xcodeproj` / scheme `DryFireVision`.
+- Xcode 16-or-newer project loading for the file-system synchronized app target.
+- iOS compilation and linking of SwiftUI, AVFoundation, Vision, and SwiftData code.
+- Code signing, provisioning, archive export, App Store Connect upload, and TestFlight install validation.
+
+Unresolved distribution prerequisites:
+
+- CI signing assets and secret values must be configured outside the repository.
+- Final App Store-ready AppIcon artwork must replace the temporary development icon before release.
+- Native iPhone/TestFlight smoke validation remains required.
+
+No Dry Fire product behavior, Live Fire behavior, analysis algorithms, UX flows, persistence schema, or domain version semantics were changed.
+
+## Previous milestone
+
 Vertical Slice 15: Live Fire Beta Foundation.
 
 ## Completed vertical slices

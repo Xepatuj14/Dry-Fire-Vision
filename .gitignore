@@ -6,6 +6,16 @@ xcuserdata/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
+*.xcarchive
+*.ipa
+*.mobileprovision
+*.provisionprofile
+*.cer
+*.p12
+*.p8
+ExportOptions.plist
+Local.xcconfig
+Secrets.xcconfig
 
 # Local Codex/agent state
 .agents/
