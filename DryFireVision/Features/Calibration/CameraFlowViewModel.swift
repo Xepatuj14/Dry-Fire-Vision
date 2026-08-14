@@ -287,6 +287,8 @@ public final class CameraFlowViewModel: ObservableObject {
             recordingState = .recording(elapsedSeconds: max(0, frame.timestampSeconds - (recordingStartTimestampSeconds ?? frame.timestampSeconds)))
         } catch let error as PoseRecordingError {
             recordingState = .failed(error)
+        } catch {
+            recordingState = .failed(.notRecording)
         }
     }
 

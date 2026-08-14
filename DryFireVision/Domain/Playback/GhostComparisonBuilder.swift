@@ -1,6 +1,6 @@
 import Foundation
 
-public enum GhostComparisonUnavailableReason: String, Equatable, Sendable {
+public enum GhostComparisonUnavailableReason: String, Error, Equatable, Sendable {
     case sameRepExcluded
     case invalidRep
     case missingPoseAsset

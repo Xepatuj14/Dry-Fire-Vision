@@ -146,7 +146,7 @@ public final class ProcessingViewModel: ObservableObject {
                 }
             } catch is CancellationError {
                 await MainActor.run {
-                    self.state = .failed(Self.failureState(for: .internalAnalysisFailure))
+                    self.state = .failed(Self.failureState(for: SessionAnalysisReason.internalAnalysisFailure))
                 }
             } catch let error as SessionAnalysisError {
                 await MainActor.run {
@@ -156,7 +156,7 @@ public final class ProcessingViewModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.diagnostic = nil
-                    self.state = .failed(Self.failureState(for: .internalAnalysisFailure))
+                    self.state = .failed(Self.failureState(for: SessionAnalysisReason.internalAnalysisFailure))
                 }
             }
         }
@@ -229,7 +229,7 @@ public final class ProcessingViewModel: ObservableObject {
         case .invalidAnalysisConfiguration:
             return failureState(for: .invalidAnalysisConfiguration)
         case .internalAnalysisFailure:
-            return failureState(for: .internalAnalysisFailure)
+            return failureState(for: SessionAnalysisReason.internalAnalysisFailure)
         }
     }
 

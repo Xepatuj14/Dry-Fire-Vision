@@ -121,8 +121,8 @@ private struct Engine {
             if stableStartTimestamp == nil {
                 stableStartTimestamp = sample.timestampSeconds
             }
-            if let stableStartTimestamp,
-               sample.timestampSeconds - stableStartTimestamp + timeComparisonTolerance >= configuration.readyStabilityWindowSeconds {
+            if let stableStart = stableStartTimestamp,
+               sample.timestampSeconds - stableStart + timeComparisonTolerance >= configuration.readyStabilityWindowSeconds {
                 transition(to: .ready, sample: sample, threshold: configuration.readyStabilityThreshold)
             }
         } else {
@@ -196,8 +196,8 @@ private struct Engine {
             if settleStartTimestamp == nil {
                 settleStartTimestamp = sample.timestampSeconds
             }
-            if let settleStartTimestamp,
-               sample.timestampSeconds - settleStartTimestamp + timeComparisonTolerance >= configuration.settleWindowSeconds,
+            if let settleStart = settleStartTimestamp,
+               sample.timestampSeconds - settleStart + timeComparisonTolerance >= configuration.settleWindowSeconds,
                let repStart = currentRepStartTimestamp {
                 let segment = makeSegment(
                     start: repStart,
@@ -249,8 +249,8 @@ private struct Engine {
             resetStartTimestamp = sample.timestampSeconds
         }
 
-        if let resetStartTimestamp,
-           sample.timestampSeconds - resetStartTimestamp + timeComparisonTolerance >= configuration.resetStabilityWindowSeconds {
+        if let resetStart = resetStartTimestamp,
+           sample.timestampSeconds - resetStart + timeComparisonTolerance >= configuration.resetStabilityWindowSeconds {
             diagnostics.append(SegmentationDiagnostic(
                 event: .resetConfirmed,
                 timestampSeconds: sample.timestampSeconds,
