@@ -219,15 +219,15 @@ public final class ProcessingViewModel: ObservableObject {
     private static func failureState(for error: SessionAnalysisError) -> ProcessingFailureState {
         switch error {
         case .invalidRecording:
-            return failureState(for: .invalidRecording)
+            return failureState(for: SessionAnalysisReason.invalidRecording)
         case .unusableCalibration:
-            return failureState(for: .unusableCalibration)
+            return failureState(for: SessionAnalysisReason.unusableCalibration)
         case .segmentationFailed:
-            return failureState(for: .segmentationFailed)
+            return failureState(for: SessionAnalysisReason.segmentationFailed)
         case .insufficientPoseData:
-            return failureState(for: .insufficientPoseData)
+            return failureState(for: SessionAnalysisReason.insufficientPoseData)
         case .invalidAnalysisConfiguration:
-            return failureState(for: .invalidAnalysisConfiguration)
+            return failureState(for: SessionAnalysisReason.invalidAnalysisConfiguration)
         case .internalAnalysisFailure:
             return failureState(for: SessionAnalysisReason.internalAnalysisFailure)
         }
