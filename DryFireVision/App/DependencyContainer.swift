@@ -53,38 +53,43 @@ public struct DependencyContainer: Sendable {
     }
 
     public static func production() -> DependencyContainer {
-        let sessionRepository: any SessionRepository
-        let progressRepository: any ProgressRepository
-        let poseAssetStore: any PoseAssetStoring
-        let maintenanceService: any MaintenanceServicing
-        do {
+        let productionDependencies: (
+            sessionRepository: any SessionRepository,
+            progressRepository: any ProgressRepository,
+            poseAssetStore: any PoseAssetStoring,
+            maintenanceService: any MaintenanceServicing
+        ) = do {
             let filePoseAssetStore = try FilePoseAssetStore.applicationSupportStore()
             let fileMediaAssetStore = try FileMediaAssetStore.applicationSupportStore()
-            poseAssetStore = filePoseAssetStore
             let swiftDataSessionRepository = SwiftDataSessionRepository(
                 modelContainer: try ModelContainer(for: DryFireVisionPersistenceSchema.schema),
                 poseAssetStore: filePoseAssetStore,
                 mediaAssetStore: fileMediaAssetStore
             )
-            sessionRepository = swiftDataSessionRepository
-            progressRepository = SessionProgressRepository(sessionRepository: swiftDataSessionRepository)
-            maintenanceService = MaintenanceService(repository: swiftDataSessionRepository)
+            (
+                sessionRepository: swiftDataSessionRepository,
+                progressRepository: SessionProgressRepository(sessionRepository: swiftDataSessionRepository),
+                poseAssetStore: filePoseAssetStore,
+                maintenanceService: MaintenanceService(repository: swiftDataSessionRepository)
+            )
         } catch {
-            poseAssetStore = UnimplementedPoseAssetStore()
-            sessionRepository = UnimplementedSessionRepository()
-            progressRepository = UnimplementedProgressRepository()
-            maintenanceService = NoopMaintenanceService()
+            (
+                sessionRepository: UnimplementedSessionRepository(),
+                progressRepository: UnimplementedProgressRepository(),
+                poseAssetStore: UnimplementedPoseAssetStore(),
+                maintenanceService: NoopMaintenanceService()
+            )
         }
 
-        DependencyContainer(
+        return DependencyContainer(
             appRouter: AppRouter(),
             featureFlags: .production,
             versions: .current,
             sessionAnalyzer: SessionAnalysisPipeline(),
-            sessionRepository: sessionRepository,
-            progressRepository: progressRepository,
-            poseAssetStore: poseAssetStore,
-            maintenanceService: maintenanceService,
+            sessionRepository: productionDependencies.sessionRepository,
+            progressRepository: productionDependencies.progressRepository,
+            poseAssetStore: productionDependencies.poseAssetStore,
+            maintenanceService: productionDependencies.maintenanceService,
             settingsStore: UserDefaultsSettingsStore(),
             cameraCaptureProvider: AVFoundationCameraCaptureProvider(),
             applicationSettingsOpener: SystemApplicationSettingsOpener(),
