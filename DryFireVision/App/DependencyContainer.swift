@@ -53,27 +53,11 @@ public struct DependencyContainer: Sendable {
     }
 
     public static func production() -> DependencyContainer {
-        let productionDependencies: (
-            sessionRepository: any SessionRepository,
-            progressRepository: any ProgressRepository,
-            poseAssetStore: any PoseAssetStoring,
-            maintenanceService: any MaintenanceServicing
-        ) = do {
-            let filePoseAssetStore = try FilePoseAssetStore.applicationSupportStore()
-            let fileMediaAssetStore = try FileMediaAssetStore.applicationSupportStore()
-            let swiftDataSessionRepository = SwiftDataSessionRepository(
-                modelContainer: try ModelContainer(for: DryFireVisionPersistenceSchema.schema),
-                poseAssetStore: filePoseAssetStore,
-                mediaAssetStore: fileMediaAssetStore
-            )
-            (
-                sessionRepository: swiftDataSessionRepository,
-                progressRepository: SessionProgressRepository(sessionRepository: swiftDataSessionRepository),
-                poseAssetStore: filePoseAssetStore,
-                maintenanceService: MaintenanceService(repository: swiftDataSessionRepository)
-            )
+        let productionDependencies: ProductionDependencies
+        do {
+            productionDependencies = try makeProductionDependencies()
         } catch {
-            (
+            productionDependencies = ProductionDependencies(
                 sessionRepository: UnimplementedSessionRepository(),
                 progressRepository: UnimplementedProgressRepository(),
                 poseAssetStore: UnimplementedPoseAssetStore(),
@@ -99,4 +83,28 @@ public struct DependencyContainer: Sendable {
             microphonePermissionProvider: SystemMicrophonePermissionProvider()
         )
     }
+
+    private static func makeProductionDependencies() throws -> ProductionDependencies {
+        let filePoseAssetStore = try FilePoseAssetStore.applicationSupportStore()
+        let fileMediaAssetStore = try FileMediaAssetStore.applicationSupportStore()
+        let swiftDataSessionRepository = SwiftDataSessionRepository(
+            modelContainer: try ModelContainer(for: DryFireVisionPersistenceSchema.schema),
+            poseAssetStore: filePoseAssetStore,
+            mediaAssetStore: fileMediaAssetStore
+        )
+
+        return ProductionDependencies(
+            sessionRepository: swiftDataSessionRepository,
+            progressRepository: SessionProgressRepository(sessionRepository: swiftDataSessionRepository),
+            poseAssetStore: filePoseAssetStore,
+            maintenanceService: MaintenanceService(repository: swiftDataSessionRepository)
+        )
+    }
+}
+
+private struct ProductionDependencies {
+    let sessionRepository: any SessionRepository
+    let progressRepository: any ProgressRepository
+    let poseAssetStore: any PoseAssetStoring
+    let maintenanceService: any MaintenanceServicing
 }
