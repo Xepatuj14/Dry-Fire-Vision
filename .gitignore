@@ -1,0 +1,11 @@
+.DS_Store
+.swiftpm/
+.build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Local Codex/agent state
+.agents/
