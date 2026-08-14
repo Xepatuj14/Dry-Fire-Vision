@@ -6,10 +6,41 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		DFV000000000000000000016 /* Exceptions for "DryFireVision" folder in "DryFireVision" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Domain/Baselines/.gitkeep",
+				"Domain/Comparison/.gitkeep",
+				"Domain/Confidence/.gitkeep",
+				"Domain/Metrics/.gitkeep",
+				"Domain/Pose/.gitkeep",
+				"Domain/Segmentation/.gitkeep",
+				"Features/Calibration/.gitkeep",
+				"Features/GhostMode/.gitkeep",
+				"Features/LiveFireBeta/.gitkeep",
+				"Features/Recording/.gitkeep",
+				"Features/RepReview/.gitkeep",
+				"Features/Results/.gitkeep",
+				"Persistence/AssetStores/.gitkeep",
+				"Persistence/Migrations/.gitkeep",
+				"Persistence/Models/.gitkeep",
+				"Services/AudioEventDetection/.gitkeep",
+				"Services/Camera/.gitkeep",
+				"Services/Media/.gitkeep",
+				"Services/PoseDetection/.gitkeep",
+				"Shared/Logging/.gitkeep",
+				"Shared/Utilities/.gitkeep",
+			);
+			target = DFV000000000000000000006 /* DryFireVision */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		DFV000000000000000000001 /* DryFireVision */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				DFV000000000000000000016 /* Exceptions for "DryFireVision" folder in "DryFireVision" target */,
 			);
 			explicitFileTypes = {
 			};
