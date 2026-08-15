@@ -284,6 +284,11 @@ public final class CameraFlowViewModel: ObservableObject {
 
         do {
             let result = try await poseDetector.detectPoses(in: frame)
+            if let activeCalibrationResult {
+                await handlePoseResultWithLockedCalibration(result, calibrationResult: activeCalibrationResult)
+                return
+            }
+
             let evaluation = calibrationEvaluator.evaluate(poseFrames: result.poseFrames)
             latestPoseFrame = evaluation.selectedPoseFrame
             calibrationState = evaluation.state
@@ -308,6 +313,31 @@ public final class CameraFlowViewModel: ObservableObject {
         }
     }
 
+    private func handlePoseResultWithLockedCalibration(
+        _ result: PoseDetectionResult,
+        calibrationResult: CalibrationResult
+    ) async {
+        latestPoseFrame = result.poseFrames.count == 1 ? result.poseFrames.first : nil
+        calibrationState = .ready(calibrationResult)
+
+        if case .recording = recordingState,
+           result.poseFrames.count == 1,
+           let frame = result.poseFrames.first {
+            await acceptRecordingFrame(frame)
+            return
+        }
+
+        if case .idle = recordingState {
+            return
+        }
+
+        if case .waitingForStartPosition = recordingState,
+           let latestPoseFrame,
+           isAcceptableStartPosition(latestPoseFrame, calibrationResult: calibrationResult) {
+            await beginRecordingFromVerifiedStartPosition(latestPoseFrame, calibrationResult: calibrationResult)
+        }
+    }
+
     private var isRecordingOrCountdown: Bool {
         switch recordingState {
         case .countdown, .recording:
@@ -318,27 +348,67 @@ public final class CameraFlowViewModel: ObservableObject {
     }
 
     private func beginRecordingAfterCountdown() async {
-        guard let calibrationResult = activeCalibrationResult, let startTimestampSeconds = latestPoseFrame?.timestampSeconds else {
+        guard let calibrationResult = activeCalibrationResult else {
             recordingState = .failed(.missingCalibration)
             return
         }
 
+        guard let latestPoseFrame else {
+            recordingState = .waitingForStartPosition
+            return
+        }
+
+        guard isAcceptableStartPosition(latestPoseFrame, calibrationResult: calibrationResult) else {
+            recordingState = .waitingForStartPosition
+            return
+        }
+
+        await beginRecordingFromVerifiedStartPosition(latestPoseFrame, calibrationResult: calibrationResult)
+    }
+
+    private func beginRecordingFromVerifiedStartPosition(
+        _ frame: PoseFrame,
+        calibrationResult: CalibrationResult
+    ) async {
         do {
             try await poseRecordingService.start(
                 calibrationResult: calibrationResult,
-                startTimestampSeconds: startTimestampSeconds,
+                startTimestampSeconds: frame.timestampSeconds,
                 metadata: PoseRecordingMetadata(
                     cameraPosition: selectedCameraPosition.rawValue,
                     nominalCaptureFPS: nil
                 )
             )
-            recordingStartTimestampSeconds = startTimestampSeconds
+            recordingStartTimestampSeconds = frame.timestampSeconds
             recordingState = .recording(elapsedSeconds: 0)
         } catch let error as PoseRecordingError {
             recordingState = .failed(error)
         } catch {
             recordingState = .failed(.alreadyRecording)
         }
+    }
+
+    private func isAcceptableStartPosition(_ frame: PoseFrame, calibrationResult: CalibrationResult) -> Bool {
+        maximumBaselineDistance(frame, calibrationResult: calibrationResult) <= calibrationConfiguration.stabilityMovementThreshold
+    }
+
+    private func maximumBaselineDistance(_ frame: PoseFrame, calibrationResult: CalibrationResult) -> Double {
+        var distances: [Double] = []
+
+        for jointID in PoseJointID.fullBodyCalibrationRequired {
+            guard
+                let current = frame.sample(for: jointID),
+                current.confidence >= calibrationConfiguration.minimumRequiredJointConfidence,
+                let baseline = calibrationResult.baselinePose.joints[jointID],
+                baseline.confidence >= calibrationConfiguration.minimumRequiredJointConfidence
+            else {
+                return .infinity
+            }
+
+            distances.append(hypot(current.x - baseline.x, current.y - baseline.y))
+        }
+
+        return distances.max() ?? .infinity
     }
 
     private func acceptRecordingFrame(_ frame: PoseFrame) async {

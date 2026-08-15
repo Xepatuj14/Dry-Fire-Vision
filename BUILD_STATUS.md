@@ -4,6 +4,30 @@
 
 GitHub Actions Native iOS CI / TestFlight Pipeline.
 
+## Latest implementation update: Dry Fire calibration Ready latch
+
+- Fixed the Ready-state calibration loop where a solo user could complete calibration, walk toward the phone to tap Start, and have normal body movement invalidate the successful calibration before recording could begin.
+- Once Dry Fire calibration reaches Ready, the captured calibration baseline and normalization data are now latched for the setup session.
+- Normal body movement after Ready no longer feeds back into full calibration evaluation or captures a replacement neutral baseline.
+- The Start button remains available after Ready while the user approaches the phone.
+- Countdown still uses the existing configured duration.
+- When countdown finishes, recording starts only if the currently visible pose is close enough to the latched starting baseline using existing required-joint visibility/confidence and existing stability movement threshold concepts.
+- If the user is not back in position when countdown finishes, the app enters a `waitingForStartPosition` recovery state with the instruction "Return to your starting position." The latched calibration is preserved and recording begins once the user returns to the stored baseline.
+- Camera switching and leaving/cancelling setup still invalidate calibration through the existing reset paths.
+- No calibration timing algorithm, stability thresholds, movement-analysis formulas, pose-analysis cadence, rep segmentation, Ghost Mode, Live Fire, persistence schema, or broad UI design was changed for this fix.
+
+Checks run in the Windows environment:
+
+- Added focused CameraFlowViewModel regression tests for Ready latching after movement, baseline preservation after Ready, countdown verification against the latched baseline, waiting-for-start-position recovery, and recording after returning to the stored baseline.
+- Source-reviewed the existing camera-switch reset path to confirm switching still invalidates calibration.
+- Swift/Xcode tests could not be executed locally because `swift` and `xcodebuild` are not available on this Windows PATH.
+
+Native iPhone/TestFlight validation still required:
+
+- Complete calibration, walk to the phone after Ready, confirm Start remains available, tap Start, and verify countdown/recovery behavior on a physical iPhone.
+- Confirm recording does not begin until the user returns close to the calibrated starting pose.
+- Confirm camera switching or leaving setup still requires a fresh calibration.
+
 ## Latest implementation update: Dry Fire front/rear camera selection
 
 - Dry Fire calibration now defaults to the front-facing camera for a new calibration flow.

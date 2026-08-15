@@ -4,6 +4,7 @@ public enum PoseRecordingState: Equatable, Sendable {
     case idle
     case awaitingCalibration
     case countdown(remainingSeconds: Int)
+    case waitingForStartPosition
     case recording(elapsedSeconds: Double)
     case completing
     case completed(PoseRecording)

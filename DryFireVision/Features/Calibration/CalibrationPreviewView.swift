@@ -98,6 +98,8 @@ struct CalibrationPreviewView: View {
                 }
             }
             .buttonStyle(.bordered)
+        case .waitingForStartPosition:
+            Text("Return to your starting position.")
         case .recording(let elapsedSeconds):
             HStack {
                 Label("Recording", systemImage: "record.circle.fill")
