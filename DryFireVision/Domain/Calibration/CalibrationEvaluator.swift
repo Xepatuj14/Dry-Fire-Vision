@@ -13,6 +13,7 @@ public struct CalibrationEvaluation: Equatable, Sendable {
 public struct CalibrationEvaluator: Sendable {
     private let configuration: CalibrationConfiguration
     private var stableFrames: [PoseFrame] = []
+    private var stablePeriodStartTimestampSeconds: Double?
 
     public init(configuration: CalibrationConfiguration = CalibrationConfiguration()) {
         self.configuration = configuration
@@ -20,17 +21,17 @@ public struct CalibrationEvaluator: Sendable {
 
     public mutating func evaluate(poseFrames: [PoseFrame]) -> CalibrationEvaluation {
         guard !poseFrames.isEmpty else {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .searchingForPerson, selectedPoseFrame: nil)
         }
 
         guard poseFrames.count == 1, let frame = poseFrames.first else {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .multiplePeople, selectedPoseFrame: nil)
         }
 
         if let adjustment = firstMissingRequiredJointAdjustment(in: frame) {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .adjust(adjustment), selectedPoseFrame: frame)
         }
 
@@ -38,55 +39,60 @@ public struct CalibrationEvaluator: Sendable {
         let averageConfidence = requiredSamples.map(\.confidence).reduce(0, +) / Double(requiredSamples.count)
 
         guard averageConfidence >= configuration.minimumAverageConfidence else {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .lowConfidence, selectedPoseFrame: frame)
         }
 
         guard let boundingBox = boundingBox(for: requiredSamples) else {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .adjust(.stepBack), selectedPoseFrame: frame)
         }
 
         if boundingBox.height < configuration.minimumBodyHeight {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .adjust(.moveCloser), selectedPoseFrame: frame)
         }
 
         if boundingBox.height > configuration.maximumBodyHeight || isNearVerticalEdge(boundingBox) {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .adjust(.stepBack), selectedPoseFrame: frame)
         }
 
         if boundingBox.minX < configuration.edgeMargin {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .adjust(.moveRight), selectedPoseFrame: frame)
         }
 
         if boundingBox.maxX > 1.0 - configuration.edgeMargin {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .adjust(.moveLeft), selectedPoseFrame: frame)
         }
 
         guard shoulderWidth(in: frame) != nil else {
-            stableFrames.removeAll()
+            resetStability()
             return CalibrationEvaluation(state: .adjust(.keepShouldersVisible), selectedPoseFrame: frame)
+        }
+
+        if stablePeriodStartTimestampSeconds == nil {
+            stablePeriodStartTimestampSeconds = frame.timestampSeconds
         }
 
         stableFrames.append(frame)
         trimStableFrames()
 
-        guard let firstFrame = stableFrames.first, let lastFrame = stableFrames.last else {
+        guard let lastFrame = stableFrames.last else {
             return CalibrationEvaluation(state: .personDetected, selectedPoseFrame: frame)
         }
 
-        let stableDuration = lastFrame.timestampSeconds - firstFrame.timestampSeconds
         let movement = maximumRequiredJointMovement(in: stableFrames)
 
         if movement > configuration.stabilityMovementThreshold {
             stableFrames = [frame]
+            stablePeriodStartTimestampSeconds = frame.timestampSeconds
             return CalibrationEvaluation(state: .holdStill(progress: 0), selectedPoseFrame: frame)
         }
 
+        let stableDuration = lastFrame.timestampSeconds - (stablePeriodStartTimestampSeconds ?? lastFrame.timestampSeconds)
         let progress = min(max(stableDuration / configuration.stabilityWindowSeconds, 0), 1)
 
         guard progress >= 1 else {
@@ -158,6 +164,11 @@ public struct CalibrationEvaluator: Sendable {
 
         let width = hypot(left.x - right.x, left.y - right.y)
         return width >= configuration.minimumShoulderWidth ? width : nil
+    }
+
+    private mutating func resetStability() {
+        stableFrames.removeAll()
+        stablePeriodStartTimestampSeconds = nil
     }
 
     private mutating func trimStableFrames() {

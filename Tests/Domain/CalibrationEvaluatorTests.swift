@@ -81,6 +81,59 @@ final class CalibrationEvaluatorTests: XCTestCase {
         XCTAssertGreaterThan(result.normalizationScale, 0.04)
     }
 
+    func testExactCadenceCompletesCalibrationFromContinuousStability() {
+        var evaluator = makeEvaluator(stabilityWindowSeconds: 1.0, minimumBaselineSamples: 4)
+        var finalEvaluation: CalibrationEvaluation?
+
+        for frame in stableFrames(timestamps: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]) {
+            finalEvaluation = evaluator.evaluate(poseFrames: [frame])
+        }
+
+        if case .ready = finalEvaluation?.state {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Expected ready state for exact 0.1s cadence, got \(String(describing: finalEvaluation?.state))")
+        }
+    }
+
+    func testSlowerCadenceDoesNotStallAroundNinetyPercent() {
+        var evaluator = makeEvaluator(stabilityWindowSeconds: 1.0, minimumBaselineSamples: 4)
+        var finalEvaluation: CalibrationEvaluation?
+
+        for frame in stableFrames(timestamps: [0.0, 0.133, 0.266, 0.399, 0.532, 0.665, 0.798, 0.931]) {
+            finalEvaluation = evaluator.evaluate(poseFrames: [frame])
+        }
+
+        if case .holdStill(let progress) = finalEvaluation?.state {
+            XCTAssertEqual(progress, 0.931, accuracy: 0.0001)
+        } else {
+            XCTFail("Expected holdStill state before the stability window elapsed, got \(String(describing: finalEvaluation?.state))")
+        }
+
+        finalEvaluation = evaluator.evaluate(poseFrames: [offsetPose(timestampSeconds: 1.064, xOffset: 0.008)])
+
+        if case .ready = finalEvaluation?.state {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Expected ready state for slower cadence without a 90% stall, got \(String(describing: finalEvaluation?.state))")
+        }
+    }
+
+    func testJitteredCadenceCompletesCalibrationFromElapsedStableTime() {
+        var evaluator = makeEvaluator(stabilityWindowSeconds: 1.0, minimumBaselineSamples: 4)
+        var finalEvaluation: CalibrationEvaluation?
+
+        for frame in stableFrames(timestamps: [0.0, 0.11, 0.24, 0.36, 0.49, 0.61, 0.75, 0.88, 1.02]) {
+            finalEvaluation = evaluator.evaluate(poseFrames: [frame])
+        }
+
+        if case .ready = finalEvaluation?.state {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Expected ready state for jittered cadence, got \(String(describing: finalEvaluation?.state))")
+        }
+    }
+
     func testMinorJitterWithinThresholdDoesNotPreventBaseline() {
         var evaluator = makeEvaluator(stabilityWindowSeconds: 0.3, stabilityMovementThreshold: 0.02, minimumBaselineSamples: 3)
         var finalEvaluation: CalibrationEvaluation?
@@ -105,6 +158,28 @@ final class CalibrationEvaluatorTests: XCTestCase {
         }
 
         XCTAssertEqual(finalEvaluation?.state, .holdStill(progress: 0))
+    }
+
+    func testMovementResetAllowsCompletionAfterNewStablePeriod() {
+        var evaluator = makeEvaluator(stabilityWindowSeconds: 0.3, stabilityMovementThreshold: 0.02, minimumBaselineSamples: 3)
+        var finalEvaluation: CalibrationEvaluation?
+
+        for frame in [
+            offsetPose(timestampSeconds: 0.0, xOffset: 0),
+            offsetPose(timestampSeconds: 0.1, xOffset: 0.03),
+            offsetPose(timestampSeconds: 0.2, xOffset: 0.03),
+            offsetPose(timestampSeconds: 0.3, xOffset: 0.03),
+            offsetPose(timestampSeconds: 0.4, xOffset: 0.03),
+            offsetPose(timestampSeconds: 0.5, xOffset: 0.03)
+        ] {
+            finalEvaluation = evaluator.evaluate(poseFrames: [frame])
+        }
+
+        if case .ready = finalEvaluation?.state {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Expected ready state after movement reset and new stable period, got \(String(describing: finalEvaluation?.state))")
+        }
     }
 
     func testInvalidShoulderWidthBlocksNormalization() {
@@ -140,5 +215,28 @@ final class CalibrationEvaluatorTests: XCTestCase {
                 minimumBaselineSamples: minimumBaselineSamples
             )
         )
+    }
+
+    private func stableFrames(timestamps: [Double]) -> [PoseFrame] {
+        timestamps.enumerated().map { index, timestamp in
+            offsetPose(timestampSeconds: timestamp, xOffset: Double(index) * 0.001)
+        }
+    }
+
+    private func offsetPose(timestampSeconds: Double, xOffset: Double) -> PoseFrame {
+        let base = SyntheticPoseFixtures.centeredFullBodyPerson(timestampSeconds: timestamp)
+        let shifted = Dictionary(uniqueKeysWithValues: base.joints.map { jointID, sample in
+            (
+                jointID,
+                JointSample(
+                    jointID: jointID,
+                    x: sample.x + xOffset,
+                    y: sample.y,
+                    confidence: sample.confidence
+                )
+            )
+        })
+
+        return PoseFrame(timestampSeconds: timestampSeconds, joints: shifted)
     }
 }
