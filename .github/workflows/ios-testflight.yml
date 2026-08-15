@@ -303,6 +303,14 @@ jobs:
             --file "$IPA_PATH" \
             --apiKey "$APPSTORE_API_KEY_ID" \
             --apiIssuer "$APPSTORE_ISSUER_ID" 2>&1 | tee build/appstore-upload.log
+          upload_status="${PIPESTATUS[0]}"
+          if grep -Eq "UPLOAD FAILED|Validation failed" build/appstore-upload.log; then
+            echo "::error::App Store Connect upload failed. See build/appstore-upload.log for details."
+            exit 1
+          fi
+          if [[ "$upload_status" -ne 0 ]]; then
+            exit "$upload_status"
+          fi
 
       - name: Upload TestFlight log artifact
         if: ${{ always() && env.UPLOAD_TO_TESTFLIGHT == 'true' }}
