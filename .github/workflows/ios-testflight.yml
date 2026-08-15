@@ -253,7 +253,10 @@ jobs:
             -exportPath "$EXPORT_PATH" \
             -exportOptionsPlist "$EXPORT_OPTIONS_PATH" 2>&1 | tee build/xcodebuild-export.log
 
-          mapfile -t ipa_files < <(find "$EXPORT_PATH" -maxdepth 1 -name '*.ipa' -type f)
+          ipa_files=()
+          while IFS= read -r ipa_file; do
+            ipa_files+=("$ipa_file")
+          done < <(find "$EXPORT_PATH" -maxdepth 1 -name '*.ipa' -type f)
           if [[ "${#ipa_files[@]}" -ne 1 ]]; then
             echo "::error::Expected exactly one IPA in $EXPORT_PATH, found ${#ipa_files[@]}."
             exit 1
