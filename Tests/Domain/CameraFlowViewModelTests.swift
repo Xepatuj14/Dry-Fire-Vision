@@ -22,6 +22,8 @@ final class CameraFlowViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.state, .active)
         XCTAssertEqual(camera.startPreviewCallCount, 1)
+        XCTAssertEqual(viewModel.selectedCameraPosition, .front)
+        XCTAssertEqual(camera.startedPositions, [.front])
     }
 
     func testDeniedAuthorizationShowsRecovery() async {
@@ -180,6 +182,39 @@ final class CameraFlowViewModelTests: XCTestCase {
         }
     }
 
+    func testSwitchingCameraSelectsRearAndResetsCalibration() async {
+        let camera = FakeCameraCaptureProvider(authorizationStatus: .authorized)
+        let poseDetector = FakePoseDetector()
+        let viewModel = CameraFlowViewModel(
+            cameraCaptureProvider: camera,
+            applicationSettingsOpener: FakeSettingsOpener(),
+            poseDetector: poseDetector,
+            poseRecordingService: PoseRecordingService(),
+            countdownProvider: ImmediateCountdownProvider(),
+            calibrationConfiguration: CalibrationConfiguration(stabilityWindowSeconds: 0.3, minimumBaselineSamples: 3),
+            poseAnalysisCadence: PoseAnalysisCadence(minimumIntervalSeconds: 0)
+        )
+
+        await viewModel.enter()
+        poseDetector.nextResult = PoseDetectionResult(poseFrames: [SyntheticPoseFixtures.centeredFullBodyPerson(timestampSeconds: 0)])
+        camera.emitFrame(CameraFrame(timestampSeconds: 0))
+        await Task.yield()
+
+        if case .holdStill = viewModel.calibrationState {
+            XCTAssertTrue(viewModel.canSwitchCamera)
+        } else {
+            XCTFail("Expected in-progress calibration before camera switch, got \(viewModel.calibrationState)")
+        }
+
+        await viewModel.switchCamera()
+
+        XCTAssertEqual(viewModel.selectedCameraPosition, .rear)
+        XCTAssertEqual(camera.startedPositions, [.front, .rear])
+        XCTAssertEqual(camera.stopPreviewCallCount, 1)
+        XCTAssertEqual(viewModel.calibrationState, .startingCamera)
+        XCTAssertNil(viewModel.latestPoseFrame)
+    }
+
     func testReadyCalibrationCanStartCountdownAndRecording() async {
         let camera = FakeCameraCaptureProvider(authorizationStatus: .authorized)
         let poseDetector = FakePoseDetector()
@@ -206,6 +241,9 @@ final class CameraFlowViewModelTests: XCTestCase {
         countdown.emit(3)
         await Task.yield()
         XCTAssertEqual(viewModel.recordingState, .countdown(remainingSeconds: 3))
+        XCTAssertFalse(viewModel.canSwitchCamera)
+        await viewModel.switchCamera()
+        XCTAssertEqual(viewModel.selectedCameraPosition, .front)
         countdown.finish()
         await Task.yield()
 
@@ -213,6 +251,52 @@ final class CameraFlowViewModelTests: XCTestCase {
             XCTAssertTrue(true)
         } else {
             XCTFail("Expected recording state, got \(viewModel.recordingState)")
+        }
+    }
+
+    func testSelectedCameraPositionIsStoredOnCompletedRecording() async {
+        let camera = FakeCameraCaptureProvider(authorizationStatus: .authorized)
+        let poseDetector = FakePoseDetector()
+        let countdown = ManualCountdownProvider()
+        let viewModel = CameraFlowViewModel(
+            cameraCaptureProvider: camera,
+            applicationSettingsOpener: FakeSettingsOpener(),
+            poseDetector: poseDetector,
+            poseRecordingService: PoseRecordingService(),
+            countdownProvider: countdown,
+            calibrationConfiguration: CalibrationConfiguration(stabilityWindowSeconds: 0.2, minimumBaselineSamples: 3),
+            poseAnalysisCadence: PoseAnalysisCadence(minimumIntervalSeconds: 0),
+            recordingConfiguration: PoseRecordingConfiguration(countdownSeconds: 3)
+        )
+
+        await viewModel.enter()
+        await viewModel.switchCamera()
+
+        for frame in SyntheticPoseFixtures.stablePoseSequence(sampleCount: 3, interval: 0.1) {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        viewModel.startRecordingCountdown()
+        countdown.finish()
+        await Task.yield()
+
+        for frame in [
+            SyntheticPoseFixtures.centeredFullBodyPerson(timestampSeconds: 0.3),
+            SyntheticPoseFixtures.centeredFullBodyPerson(timestampSeconds: 0.4)
+        ] {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        await viewModel.stopRecording()
+
+        if case .completed(let recording) = viewModel.recordingState {
+            XCTAssertEqual(recording.metadata.cameraPosition, CameraPosition.rear.rawValue)
+        } else {
+            XCTFail("Expected completed recording, got \(viewModel.recordingState)")
         }
     }
 
@@ -244,6 +328,7 @@ private final class FakeCameraCaptureProvider: CameraCaptureProviding, @unchecke
     private(set) var startPreviewCallCount = 0
     private(set) var stopPreviewCallCount = 0
     private(set) var activeLogicalSessionCount = 0
+    private(set) var startedPositions: [CameraPosition] = []
     private var lifecycleContinuation: AsyncStream<CameraCaptureLifecycleEvent>.Continuation?
     private var frameContinuation: AsyncStream<CameraFrame>.Continuation?
 
@@ -262,15 +347,16 @@ private final class FakeCameraCaptureProvider: CameraCaptureProviding, @unchecke
         return requestAuthorizationResult
     }
 
-    func startPreview() async throws -> CameraPreviewSession {
+    func startPreview(position: CameraPosition) async throws -> CameraPreviewSession {
         startPreviewCallCount += 1
+        startedPositions.append(position)
 
         if let startError {
             throw startError
         }
 
         activeLogicalSessionCount = 1
-        return CameraPreviewSession()
+        return CameraPreviewSession(cameraPosition: position)
     }
 
     func stopPreview() async {

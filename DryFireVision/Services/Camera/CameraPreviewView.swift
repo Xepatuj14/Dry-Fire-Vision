@@ -18,11 +18,23 @@ public struct CameraPreviewView: UIViewRepresentable {
         let view = PreviewContainerView()
         view.previewLayer.videoGravity = .resizeAspectFill
         view.previewLayer.session = previewSession.captureSession
+        configureMirroring(on: view.previewLayer)
         return view
     }
 
     public func updateUIView(_ uiView: PreviewContainerView, context: Context) {
         uiView.previewLayer.session = previewSession.captureSession
+        configureMirroring(on: uiView.previewLayer)
+    }
+
+    private func configureMirroring(on previewLayer: AVCaptureVideoPreviewLayer) {
+        guard let connection = previewLayer.connection,
+              connection.isVideoMirroringSupported else {
+            return
+        }
+
+        connection.automaticallyAdjustsVideoMirroring = false
+        connection.isVideoMirrored = previewSession.cameraPosition == .front
     }
 }
 
@@ -50,11 +62,23 @@ public struct CameraPreviewView: NSViewRepresentable {
         let view = PreviewContainerView()
         view.previewLayer.videoGravity = .resizeAspectFill
         view.previewLayer.session = previewSession.captureSession
+        configureMirroring(on: view.previewLayer)
         return view
     }
 
     public func updateNSView(_ nsView: PreviewContainerView, context: Context) {
         nsView.previewLayer.session = previewSession.captureSession
+        configureMirroring(on: nsView.previewLayer)
+    }
+
+    private func configureMirroring(on previewLayer: AVCaptureVideoPreviewLayer) {
+        guard let connection = previewLayer.connection,
+              connection.isVideoMirroringSupported else {
+            return
+        }
+
+        connection.automaticallyAdjustsVideoMirroring = false
+        connection.isVideoMirrored = previewSession.cameraPosition == .front
     }
 }
 

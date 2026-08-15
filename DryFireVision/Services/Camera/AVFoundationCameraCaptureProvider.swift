@@ -11,6 +11,8 @@ public final class AVFoundationCameraCaptureProvider: CameraCaptureProviding, @u
     private let sessionQueue = DispatchQueue(label: "com.dryfirevision.camera.session")
     private let videoOutput = AVCaptureVideoDataOutput()
     private let videoOutputDelegate = CameraVideoOutputDelegate()
+    private var currentInput: AVCaptureDeviceInput?
+    private var configuredPosition: CameraPosition?
     private var isConfigured = false
     private var isPreviewRunning = false
 
@@ -28,18 +30,19 @@ public final class AVFoundationCameraCaptureProvider: CameraCaptureProviding, @u
         }
     }
 
-    public func startPreview() async throws -> CameraPreviewSession {
+    public func startPreview(position: CameraPosition) async throws -> CameraPreviewSession {
         try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async {
                 do {
-                    try self.configureSessionIfNeeded()
+                    try self.configureSessionIfNeeded(position: position)
+                    self.configureVideoOutputMirroring()
 
                     if !self.captureSession.isRunning {
                         self.captureSession.startRunning()
                     }
 
                     self.isPreviewRunning = true
-                    continuation.resume(returning: CameraPreviewSession(captureSession: self.captureSession))
+                    continuation.resume(returning: CameraPreviewSession(captureSession: self.captureSession, cameraPosition: position))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -97,9 +100,13 @@ public final class AVFoundationCameraCaptureProvider: CameraCaptureProviding, @u
         videoOutputDelegate.frames()
     }
 
-    private func configureSessionIfNeeded() throws {
-        guard !isConfigured else {
+    private func configureSessionIfNeeded(position: CameraPosition) throws {
+        guard !isConfigured || configuredPosition != position else {
             return
+        }
+
+        if captureSession.isRunning {
+            captureSession.stopRunning()
         }
 
         captureSession.beginConfiguration()
@@ -109,7 +116,12 @@ public final class AVFoundationCameraCaptureProvider: CameraCaptureProviding, @u
 
         captureSession.sessionPreset = .high
 
-        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+        if let currentInput {
+            captureSession.removeInput(currentInput)
+            self.currentInput = nil
+        }
+
+        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position.avCapturePosition) else {
             throw CameraCaptureError.deviceUnavailable
         }
 
@@ -119,15 +131,34 @@ public final class AVFoundationCameraCaptureProvider: CameraCaptureProviding, @u
         }
 
         captureSession.addInput(input)
+        currentInput = input
 
-        videoOutput.alwaysDiscardsLateVideoFrames = true
-        videoOutput.setSampleBufferDelegate(videoOutputDelegate, queue: DispatchQueue(label: "com.dryfirevision.camera.videoOutput"))
-        guard captureSession.canAddOutput(videoOutput) else {
-            throw CameraCaptureError.cannotAddInput
+        if !captureSession.outputs.contains(where: { $0 === videoOutput }) {
+            videoOutput.alwaysDiscardsLateVideoFrames = true
+            videoOutput.setSampleBufferDelegate(videoOutputDelegate, queue: DispatchQueue(label: "com.dryfirevision.camera.videoOutput"))
+            guard captureSession.canAddOutput(videoOutput) else {
+                throw CameraCaptureError.cannotAddInput
+            }
+
+            captureSession.addOutput(videoOutput)
         }
 
-        captureSession.addOutput(videoOutput)
+        if let outputConnection = videoOutput.connection(with: .video),
+           outputConnection.isVideoMirroringSupported {
+            outputConnection.isVideoMirrored = false
+        }
+
+        configuredPosition = position
         isConfigured = true
+    }
+
+    private func configureVideoOutputMirroring() {
+        guard let outputConnection = videoOutput.connection(with: .video),
+              outputConnection.isVideoMirroringSupported else {
+            return
+        }
+
+        outputConnection.isVideoMirrored = false
     }
 
     private func mapAuthorizationStatus(_ status: AVAuthorizationStatus) -> CameraAuthorizationStatus {
@@ -155,7 +186,7 @@ public final class AVFoundationCameraCaptureProvider: CameraCaptureProviding, @u
         .restricted
     }
 
-    public func startPreview() async throws -> CameraPreviewSession {
+    public func startPreview(position: CameraPosition) async throws -> CameraPreviewSession {
         throw CameraCaptureError.deviceUnavailable
     }
 
@@ -176,6 +207,17 @@ public final class AVFoundationCameraCaptureProvider: CameraCaptureProviding, @u
 }
 
 #if canImport(AVFoundation)
+private extension CameraPosition {
+    var avCapturePosition: AVCaptureDevice.Position {
+        switch self {
+        case .front:
+            return .front
+        case .rear:
+            return .back
+        }
+    }
+}
+
 private final class CameraVideoOutputDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private var frameContinuation: AsyncStream<CameraFrame>.Continuation?
 

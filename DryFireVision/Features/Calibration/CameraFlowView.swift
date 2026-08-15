@@ -95,6 +95,11 @@ struct CameraFlowView: View {
                     poseFrame: viewModel.latestPoseFrame,
                     calibrationState: viewModel.calibrationState,
                     recordingState: viewModel.recordingState,
+                    selectedCameraPosition: viewModel.selectedCameraPosition,
+                    canSwitchCamera: viewModel.canSwitchCamera,
+                    switchCameraAction: {
+                        await viewModel.switchCamera()
+                    },
                     startRecordingAction: {
                         viewModel.startRecordingCountdown()
                     },

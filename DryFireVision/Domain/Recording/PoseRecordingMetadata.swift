@@ -2,6 +2,7 @@ import Foundation
 
 public struct PoseRecordingMetadata: Codable, Equatable, Sendable {
     public let cameraPerspective: String
+    public let cameraPosition: String?
     public let captureOrientation: String
     public let nominalCaptureFPS: Double?
     public let effectivePoseFPS: Double?
@@ -13,6 +14,7 @@ public struct PoseRecordingMetadata: Codable, Equatable, Sendable {
 
     public init(
         cameraPerspective: String = "unspecified",
+        cameraPosition: String? = nil,
         captureOrientation: String = "portrait",
         nominalCaptureFPS: Double? = nil,
         effectivePoseFPS: Double? = nil,
@@ -23,6 +25,7 @@ public struct PoseRecordingMetadata: Codable, Equatable, Sendable {
         poseEncodingVersion: String = VersionCatalog.current.poseEncodingVersion
     ) {
         self.cameraPerspective = cameraPerspective
+        self.cameraPosition = cameraPosition
         self.captureOrientation = captureOrientation
         self.nominalCaptureFPS = nominalCaptureFPS
         self.effectivePoseFPS = effectivePoseFPS
@@ -40,6 +43,7 @@ public struct PoseRecordingMetadata: Codable, Equatable, Sendable {
     ) -> PoseRecordingMetadata {
         PoseRecordingMetadata(
             cameraPerspective: cameraPerspective,
+            cameraPosition: cameraPosition,
             captureOrientation: captureOrientation,
             nominalCaptureFPS: nominalCaptureFPS,
             effectivePoseFPS: durationSeconds > 0 ? Double(acceptedPoseFrameCount) / durationSeconds : nil,

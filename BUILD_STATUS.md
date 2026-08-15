@@ -4,6 +4,30 @@
 
 GitHub Actions Native iOS CI / TestFlight Pipeline.
 
+## Latest implementation update: Dry Fire front/rear camera selection
+
+- Dry Fire calibration now defaults to the front-facing camera for a new calibration flow.
+- Calibration preview exposes a standard camera-flip control while camera switching is permitted.
+- Switching between front and rear cameras restarts capture, clears any current calibration baseline, and restarts pose/framing evaluation.
+- Camera switching is locked after calibration reaches Ready and remains unavailable during countdown, recording, and processing.
+- Front-camera preview mirroring is applied only to the preview layer; Vision/domain pose coordinates are not mirrored or transformed.
+- Dry Fire recording metadata now carries the selected `cameraPosition`, and the existing persisted `PersistedTrainingSession.cameraPosition` field is populated with `front` or `rear`.
+- No movement-analysis formulas, calibration thresholds, pose confidence rules, rep segmentation, Live Fire, Ghost Mode, schema model fields, or navigation flows were changed for this update.
+
+Checks run in the Windows environment:
+
+- Source-reviewed AVFoundation camera input selection and preview mirroring boundaries.
+- Added focused tests for default front camera selection, switching to rear, calibration invalidation on switch, switch lockout during countdown, completed-recording camera metadata, and persisted session camera position.
+- Swift/Xcode tests could not be executed locally because `swift` and `xcodebuild` are not available on this Windows PATH.
+
+Native iPhone/TestFlight validation still required:
+
+- Confirm front and rear camera capture both start successfully on physical iPhones.
+- Confirm the front preview feels naturally mirrored while pose skeleton alignment and analysis coordinates remain correct.
+- Confirm switching before calibration clears the previous baseline and recalibrates cleanly.
+- Confirm the flip control disappears or is unavailable after Ready, during countdown, during recording, and through processing.
+- Confirm completed sessions persist `cameraPosition` as `front` or `rear`.
+
 ## Infrastructure milestone: GitHub Actions Native iOS CI / TestFlight Pipeline
 
 - Created `.github/workflows/ios-testflight.yml`.

@@ -6,6 +6,9 @@ struct CalibrationPreviewView: View {
     let poseFrame: PoseFrame?
     let calibrationState: CalibrationReadinessState
     let recordingState: PoseRecordingState
+    let selectedCameraPosition: CameraPosition
+    let canSwitchCamera: Bool
+    let switchCameraAction: () async -> Void
     let startRecordingAction: () async -> Void
     let stopRecordingAction: () async -> Void
     let cancelRecordingAction: () async -> Void
@@ -42,6 +45,31 @@ struct CalibrationPreviewView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .padding()
             .accessibilityElement(children: .combine)
+
+            if canSwitchCamera {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button {
+                            Task {
+                                await switchCameraAction()
+                            }
+                        } label: {
+                            Image(systemName: "arrow.triangle.2.circlepath.camera")
+                                .font(.title3)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.primary)
+                        .background(.thinMaterial)
+                        .clipShape(Circle())
+                        .accessibilityLabel("Switch camera")
+                        .accessibilityValue(selectedCameraPosition.label)
+                    }
+                    Spacer()
+                }
+                .padding()
+            }
         }
     }
 

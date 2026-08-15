@@ -8,12 +8,14 @@ public final class CameraFlowViewModel: ObservableObject {
     @Published public private(set) var calibrationState: CalibrationReadinessState = .startingCamera
     @Published public private(set) var latestPoseFrame: PoseFrame?
     @Published public private(set) var recordingState: PoseRecordingState = .awaitingCalibration
+    @Published public private(set) var selectedCameraPosition: CameraPosition = .front
 
     private let cameraCaptureProvider: any CameraCaptureProviding
     private let applicationSettingsOpener: any ApplicationSettingsOpening
     private let poseDetector: any PoseDetecting
     private let poseRecordingService: PoseRecordingService
     private let countdownProvider: any CountdownProviding
+    private let calibrationConfiguration: CalibrationConfiguration
     private let recordingConfiguration: PoseRecordingConfiguration
     private var calibrationEvaluator: CalibrationEvaluator
     private var poseAnalysisCadence: PoseAnalysisCadence
@@ -38,9 +40,26 @@ public final class CameraFlowViewModel: ObservableObject {
         self.poseDetector = poseDetector
         self.poseRecordingService = poseRecordingService
         self.countdownProvider = countdownProvider
+        self.calibrationConfiguration = calibrationConfiguration
         self.recordingConfiguration = recordingConfiguration
         self.calibrationEvaluator = CalibrationEvaluator(configuration: calibrationConfiguration)
         self.poseAnalysisCadence = poseAnalysisCadence
+    }
+
+    public var canSwitchCamera: Bool {
+        guard state == .active else {
+            return false
+        }
+
+        guard case .awaitingCalibration = recordingState else {
+            return false
+        }
+
+        if case .ready = calibrationState {
+            return false
+        }
+
+        return true
     }
 
     public func enter() async {
@@ -55,6 +74,15 @@ public final class CameraFlowViewModel: ObservableObject {
 
     public func retryCameraStart() async {
         await startCamera()
+    }
+
+    public func switchCamera() async {
+        guard canSwitchCamera else {
+            return
+        }
+
+        selectedCameraPosition = selectedCameraPosition.toggled
+        await restartCameraForSelectedPosition()
     }
 
     public func openSettings() async {
@@ -80,6 +108,8 @@ public final class CameraFlowViewModel: ObservableObject {
         recordingState = .awaitingCalibration
         activeCalibrationResult = nil
         recordingStartTimestampSeconds = nil
+        selectedCameraPosition = .front
+        resetCalibrationEvaluation()
     }
 
     public func startRecordingCountdown() {
@@ -188,16 +218,10 @@ public final class CameraFlowViewModel: ObservableObject {
             return
         }
 
-        previewSession = nil
-        latestPoseFrame = nil
-        calibrationState = .startingCamera
-        recordingState = .awaitingCalibration
-        activeCalibrationResult = nil
-        recordingStartTimestampSeconds = nil
-        state = .startingCamera
+        resetCalibrationForCameraStart()
 
         do {
-            previewSession = try await cameraCaptureProvider.startPreview()
+            previewSession = try await cameraCaptureProvider.startPreview(position: selectedCameraPosition)
             state = .active
             observePoseFramesIfNeeded()
         } catch let error as CameraCaptureError {
@@ -205,6 +229,39 @@ public final class CameraFlowViewModel: ObservableObject {
         } catch {
             state = .failed(.runtimeFailure)
         }
+    }
+
+    private func restartCameraForSelectedPosition() async {
+        poseObservationTask?.cancel()
+        poseObservationTask = nil
+        await cameraCaptureProvider.stopPreview()
+        resetCalibrationForCameraStart()
+
+        do {
+            previewSession = try await cameraCaptureProvider.startPreview(position: selectedCameraPosition)
+            state = .active
+            observePoseFramesIfNeeded()
+        } catch let error as CameraCaptureError {
+            state = .failed(mapFailureReason(error))
+        } catch {
+            state = .failed(.runtimeFailure)
+        }
+    }
+
+    private func resetCalibrationForCameraStart() {
+        previewSession = nil
+        latestPoseFrame = nil
+        calibrationState = .startingCamera
+        recordingState = .awaitingCalibration
+        activeCalibrationResult = nil
+        recordingStartTimestampSeconds = nil
+        state = .startingCamera
+        resetCalibrationEvaluation()
+    }
+
+    private func resetCalibrationEvaluation() {
+        calibrationEvaluator = CalibrationEvaluator(configuration: calibrationConfiguration)
+        poseAnalysisCadence = PoseAnalysisCadence(minimumIntervalSeconds: poseAnalysisCadence.minimumIntervalSeconds)
     }
 
     private func observePoseFramesIfNeeded() {
@@ -270,7 +327,10 @@ public final class CameraFlowViewModel: ObservableObject {
             try await poseRecordingService.start(
                 calibrationResult: calibrationResult,
                 startTimestampSeconds: startTimestampSeconds,
-                metadata: PoseRecordingMetadata(nominalCaptureFPS: nil)
+                metadata: PoseRecordingMetadata(
+                    cameraPosition: selectedCameraPosition.rawValue,
+                    nominalCaptureFPS: nil
+                )
             )
             recordingStartTimestampSeconds = startTimestampSeconds
             recordingState = .recording(elapsedSeconds: 0)

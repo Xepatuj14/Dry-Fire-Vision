@@ -17,7 +17,7 @@ public enum SessionAnalysisPersistenceMapper {
             invalidRepCount: analysis.invalidRepCount,
             actualSegmentedRepCount: analysis.actualSegmentedRepCount,
             cameraPerspective: metadata?.cameraPerspective ?? "unspecified",
-            cameraPosition: nil,
+            cameraPosition: metadata?.cameraPosition,
             captureOrientation: metadata?.captureOrientation ?? "portrait",
             nominalCaptureFPS: try finiteOptional(metadata?.nominalCaptureFPS),
             analysisCadenceFPS: try finiteOptional(metadata?.effectivePoseFPS),
@@ -167,6 +167,7 @@ public enum SessionAnalysisPersistenceMapper {
             recordingEndTimestampSeconds: session.endedAt?.timeIntervalSince1970,
             recordingMetadata: PoseRecordingMetadata(
                 cameraPerspective: session.cameraPerspective,
+                cameraPosition: session.cameraPosition,
                 captureOrientation: session.captureOrientation,
                 nominalCaptureFPS: session.nominalCaptureFPS,
                 effectivePoseFPS: session.analysisCadenceFPS
