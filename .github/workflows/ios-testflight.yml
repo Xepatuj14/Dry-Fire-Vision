@@ -149,6 +149,53 @@ jobs:
             done
           fi
 
+      - name: Validate App Store icon opacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import struct
+          import sys
+          from pathlib import Path
+
+          iconset = Path("DryFireVision/Resources/Assets.xcassets/AppIcon.appiconset")
+          contents = json.loads((iconset / "Contents.json").read_text(encoding="utf-8"))
+          candidates = [
+              image for image in contents.get("images", [])
+              if image.get("size") == "1024x1024"
+              and image.get("idiom") in {"ios-marketing", "universal"}
+              and image.get("filename")
+          ]
+          if len(candidates) != 1:
+              print(f"::error::Expected exactly one 1024x1024 App Store icon entry, found {len(candidates)}.")
+              sys.exit(1)
+
+          icon_path = iconset / candidates[0]["filename"]
+          data = icon_path.read_bytes()
+          if data[:8] != b"\x89PNG\r\n\x1a\n":
+              print(f"::error::App Store icon is not a PNG: {icon_path}")
+              sys.exit(1)
+
+          width, height, bit_depth, color_type, _, _, _ = struct.unpack(">IIBBBBB", data[16:29])
+          chunks = []
+          offset = 8
+          while offset < len(data):
+              length = struct.unpack(">I", data[offset:offset + 4])[0]
+              chunk_type = data[offset + 4:offset + 8].decode("ascii")
+              chunks.append(chunk_type)
+              offset += 12 + length
+
+          if (width, height) != (1024, 1024):
+              print(f"::error::App Store icon must be 1024x1024, found {width}x{height}: {icon_path}")
+              sys.exit(1)
+          if color_type in {4, 6} or "tRNS" in chunks:
+              print(f"::error::App Store icon contains an alpha channel or transparency chunk: {icon_path}")
+              sys.exit(1)
+
+          print(f"Validated opaque App Store icon: {icon_path} ({width}x{height}, PNG color type {color_type}, bit depth {bit_depth})")
+          PY
+
       - name: Install signing certificate and provisioning profile
         shell: bash
         env:
@@ -297,6 +344,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          set +e
           xcrun altool \
             --upload-app \
             --type ios \
@@ -304,11 +352,13 @@ jobs:
             --apiKey "$APPSTORE_API_KEY_ID" \
             --apiIssuer "$APPSTORE_ISSUER_ID" 2>&1 | tee build/appstore-upload.log
           upload_status="${PIPESTATUS[0]}"
-          if grep -Eq "UPLOAD FAILED|Validation failed" build/appstore-upload.log; then
+          set -e
+          if grep -Eiq "UPLOAD FAILED|Failed to upload package|Validation failed|ERROR ITMS|Asset validation failed|Invalid large app icon" build/appstore-upload.log; then
             echo "::error::App Store Connect upload failed. See build/appstore-upload.log for details."
             exit 1
           fi
           if [[ "$upload_status" -ne 0 ]]; then
+            echo "::error::App Store Connect upload command exited with status $upload_status."
             exit "$upload_status"
           fi
 
