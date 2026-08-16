@@ -4,6 +4,33 @@
 
 GitHub Actions Native iOS CI / TestFlight Pipeline.
 
+## Latest implementation update: Dry Fire front-camera skeleton mirroring
+
+- Fixed the front-facing camera skeleton overlay appearing horizontally reversed relative to the mirrored selfie preview.
+- Root cause confirmed: the front camera preview layer is explicitly mirrored for natural selfie behavior, while the calibration skeleton overlay was rendering canonical unmirrored pose coordinates directly through the aspect-fill mapper.
+- The fix keeps Vision/domain pose coordinates canonical and camera-independent; it does not swap anatomical left/right joint identities or alter analysis inputs.
+- Front-camera overlay rendering now applies a display-only horizontal mirror before the existing aspect-fill projection: `displayNormalizedX = 1.0 - normalizedX`.
+- Rear-camera overlay rendering remains unchanged: `displayNormalizedX = normalizedX`.
+- Existing preview aspect-fill crop/offset behavior is preserved for both camera positions.
+- AVFoundation sample-buffer output remains unmirrored for pose analysis; only the preview layer and matching display overlay are mirrored for the front camera.
+- No movement-analysis formulas, calibration thresholds, stability timing, rep segmentation, persistence schema, Ghost Mode, Live Fire, or broad UI behavior was changed for this fix.
+
+Checks run in the Windows environment:
+
+- Source-reviewed `CameraPreviewView`, `AVFoundationCameraCaptureProvider`, `VisionPoseDetector`, `PoseObservationMapper`, `CalibrationPreviewView`, and the overlay mapper boundary.
+- Confirmed the front preview sets `connection.isVideoMirrored = true` only for `CameraPosition.front`.
+- Confirmed Vision pose detection uses the capture sample buffer with orientation `.right` and no camera-position mirror transform.
+- Added focused aspect-fill overlay mapping tests for rear/unmirrored mapping, front/display-mirrored mapping, center-point behavior, and the no-double-mirror regression.
+- Confirmed existing `PoseObservationMapperTests` preserve anatomical joint identity (`leftWrist` remains `leftWrist`) and canonical coordinate conversion.
+- `swift test --filter AspectFillPoseOverlayMapperTests` could not be executed locally because `swift` is not available on this Windows PATH.
+
+Native iPhone/TestFlight validation still required:
+
+- Confirm rear-camera skeleton markers and bones remain aligned while raising left/right arms, moving left/right, and leaning left/right.
+- Confirm front-camera skeleton markers and bones align with the mirrored selfie preview for the same movements.
+- Confirm switching cameras does not leave a stale mirror state active.
+- Confirm calibration framing, joint markers, skeleton bones, and any movement-path overlays using this mapping remain visually aligned.
+
 ## Latest implementation update: Dry Fire calibration Ready latch
 
 - Fixed the Ready-state calibration loop where a solo user could complete calibration, walk toward the phone to tap Start, and have normal body movement invalidate the successful calibration before recording could begin.
@@ -11,21 +38,25 @@ GitHub Actions Native iOS CI / TestFlight Pipeline.
 - Normal body movement after Ready no longer feeds back into full calibration evaluation or captures a replacement neutral baseline.
 - The Start button remains available after Ready while the user approaches the phone.
 - Countdown still uses the existing configured duration.
-- When countdown finishes, recording starts only if the currently visible pose is close enough to the latched starting baseline using existing required-joint visibility/confidence and existing stability movement threshold concepts.
-- If the user is not back in position when countdown finishes, the app enters a `waitingForStartPosition` recovery state with the instruction "Return to your starting position." The latched calibration is preserved and recording begins once the user returns to the stored baseline.
+- Root cause of the post-countdown arming regression: the previous recovery path only checked a single return-to-baseline frame and started recording from that frame, which did not guarantee the recorded pose stream contained the stable near-baseline window required for the rep state machine's `WAITING_FOR_STABLE -> READY` transition.
+- When Start is pressed, a bounded recording-arm tracker now starts fresh from the latched calibration baseline; Start-button excursion frames are excluded from the recording-arm buffer.
+- During countdown and `waitingForStartPosition`, the tracker requires required-joint visibility, adequate confidence, similarity to the accepted baseline using the existing normalized baseline-distance concepts, and a stable window using the existing recording readiness thresholds.
+- Recording starts from the first frame of the stable return-to-baseline window, preserving enough initial stable samples for the offline segmentation state machine to reach `READY` before the first real movement.
+- If the user is not back in position when countdown finishes, the app enters a `waitingForStartPosition` recovery state with the instruction "Return to your starting position." The latched calibration is preserved and recording begins once the user returns and remains stable near the stored baseline.
 - Camera switching and leaving/cancelling setup still invalidate calibration through the existing reset paths.
 - No calibration timing algorithm, stability thresholds, movement-analysis formulas, pose-analysis cadence, rep segmentation, Ghost Mode, Live Fire, persistence schema, or broad UI design was changed for this fix.
 
 Checks run in the Windows environment:
 
-- Added focused CameraFlowViewModel regression tests for Ready latching after movement, baseline preservation after Ready, countdown verification against the latched baseline, waiting-for-start-position recovery, and recording after returning to the stored baseline.
+- Added focused CameraFlowViewModel regression tests for Ready latching after movement, baseline preservation after Ready, countdown verification against the latched baseline, waiting-for-start-position recovery, user-never-returns behavior, recording after a stable return window, and first-rep segmentation after a Start-button excursion.
 - Source-reviewed the existing camera-switch reset path to confirm switching still invalidates calibration.
 - Swift/Xcode tests could not be executed locally because `swift` and `xcodebuild` are not available on this Windows PATH.
 
 Native iPhone/TestFlight validation still required:
 
 - Complete calibration, walk to the phone after Ready, confirm Start remains available, tap Start, and verify countdown/recovery behavior on a physical iPhone.
-- Confirm recording does not begin until the user returns close to the calibrated starting pose.
+- Confirm recording does not begin until the user returns close to the calibrated starting pose and remains stable long enough to arm recording.
+- Confirm the Start-button excursion is not counted as Rep 1 and the first intentional movement after arming is detected normally.
 - Confirm camera switching or leaving setup still requires a fresh calibration.
 
 ## Latest implementation update: Dry Fire front/rear camera selection

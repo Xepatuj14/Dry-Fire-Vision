@@ -28,7 +28,7 @@ struct CalibrationPreviewView: View {
             }
 
             if let poseFrame {
-                PoseSkeletonOverlayView(poseFrame: poseFrame)
+                PoseSkeletonOverlayView(poseFrame: poseFrame, cameraPosition: selectedCameraPosition)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }

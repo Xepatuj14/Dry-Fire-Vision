@@ -3,9 +3,11 @@ import Foundation
 
 struct AspectFillPoseOverlayMapper {
     let sourceAspectRatio: Double
+    let isMirrored: Bool
 
-    init(sourceAspectRatio: Double = 9.0 / 16.0) {
+    init(sourceAspectRatio: Double = 9.0 / 16.0, isMirrored: Bool = false) {
         self.sourceAspectRatio = sourceAspectRatio
+        self.isMirrored = isMirrored
     }
 
     func displayPoint(for sample: JointSample, in size: CGSize) -> CGPoint {
@@ -27,8 +29,10 @@ struct AspectFillPoseOverlayMapper {
             offsetY = 0
         }
 
+        let normalizedX = isMirrored ? 1.0 - sample.x : sample.x
+
         return CGPoint(
-            x: offsetX + sample.x * imageWidth,
+            x: offsetX + normalizedX * imageWidth,
             y: offsetY + sample.y * imageHeight
         )
     }

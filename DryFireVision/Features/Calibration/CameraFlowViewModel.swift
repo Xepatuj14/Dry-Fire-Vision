@@ -16,6 +16,7 @@ public final class CameraFlowViewModel: ObservableObject {
     private let poseRecordingService: PoseRecordingService
     private let countdownProvider: any CountdownProviding
     private let calibrationConfiguration: CalibrationConfiguration
+    private let recordingReadinessConfiguration: AnalysisConfiguration
     private let recordingConfiguration: PoseRecordingConfiguration
     private var calibrationEvaluator: CalibrationEvaluator
     private var poseAnalysisCadence: PoseAnalysisCadence
@@ -23,6 +24,7 @@ public final class CameraFlowViewModel: ObservableObject {
     private var poseObservationTask: Task<Void, Never>?
     private var countdownTask: Task<Void, Never>?
     private var activeCalibrationResult: CalibrationResult?
+    private var recordingArmingTracker: RecordingArmingTracker?
     private var recordingStartTimestampSeconds: Double?
 
     public init(
@@ -33,6 +35,7 @@ public final class CameraFlowViewModel: ObservableObject {
         countdownProvider: any CountdownProviding,
         calibrationConfiguration: CalibrationConfiguration = CalibrationConfiguration(),
         poseAnalysisCadence: PoseAnalysisCadence = PoseAnalysisCadence(),
+        recordingReadinessConfiguration: AnalysisConfiguration = .provisionalSegmentationV1,
         recordingConfiguration: PoseRecordingConfiguration = PoseRecordingConfiguration()
     ) {
         self.cameraCaptureProvider = cameraCaptureProvider
@@ -41,6 +44,7 @@ public final class CameraFlowViewModel: ObservableObject {
         self.poseRecordingService = poseRecordingService
         self.countdownProvider = countdownProvider
         self.calibrationConfiguration = calibrationConfiguration
+        self.recordingReadinessConfiguration = recordingReadinessConfiguration
         self.recordingConfiguration = recordingConfiguration
         self.calibrationEvaluator = CalibrationEvaluator(configuration: calibrationConfiguration)
         self.poseAnalysisCadence = poseAnalysisCadence
@@ -107,6 +111,7 @@ public final class CameraFlowViewModel: ObservableObject {
         calibrationState = .startingCamera
         recordingState = .awaitingCalibration
         activeCalibrationResult = nil
+        recordingArmingTracker = nil
         recordingStartTimestampSeconds = nil
         selectedCameraPosition = .front
         resetCalibrationEvaluation()
@@ -119,6 +124,11 @@ public final class CameraFlowViewModel: ObservableObject {
         }
 
         activeCalibrationResult = calibrationResult
+        recordingArmingTracker = RecordingArmingTracker(
+            calibrationResult: calibrationResult,
+            calibrationConfiguration: calibrationConfiguration,
+            readinessConfiguration: recordingReadinessConfiguration
+        )
         countdownTask?.cancel()
         recordingState = .countdown(remainingSeconds: recordingConfiguration.countdownSeconds)
 
@@ -141,6 +151,7 @@ public final class CameraFlowViewModel: ObservableObject {
         countdownTask?.cancel()
         countdownTask = nil
         await poseRecordingService.cancel()
+        recordingArmingTracker = nil
         recordingState = .cancelled
     }
 
@@ -254,6 +265,7 @@ public final class CameraFlowViewModel: ObservableObject {
         calibrationState = .startingCamera
         recordingState = .awaitingCalibration
         activeCalibrationResult = nil
+        recordingArmingTracker = nil
         recordingStartTimestampSeconds = nil
         state = .startingCamera
         resetCalibrationEvaluation()
@@ -320,6 +332,10 @@ public final class CameraFlowViewModel: ObservableObject {
         latestPoseFrame = result.poseFrames.count == 1 ? result.poseFrames.first : nil
         calibrationState = .ready(calibrationResult)
 
+        if case .countdown = recordingState, let latestPoseFrame {
+            recordingArmingTracker?.process(latestPoseFrame)
+        }
+
         if case .recording = recordingState,
            result.poseFrames.count == 1,
            let frame = result.poseFrames.first {
@@ -332,9 +348,11 @@ public final class CameraFlowViewModel: ObservableObject {
         }
 
         if case .waitingForStartPosition = recordingState,
-           let latestPoseFrame,
-           isAcceptableStartPosition(latestPoseFrame, calibrationResult: calibrationResult) {
-            await beginRecordingFromVerifiedStartPosition(latestPoseFrame, calibrationResult: calibrationResult)
+           let latestPoseFrame {
+            recordingArmingTracker?.process(latestPoseFrame)
+            if recordingArmingTracker?.isReady == true {
+                await beginRecordingFromVerifiedStartPosition(calibrationResult: calibrationResult)
+            }
         }
     }
 
@@ -358,57 +376,47 @@ public final class CameraFlowViewModel: ObservableObject {
             return
         }
 
-        guard isAcceptableStartPosition(latestPoseFrame, calibrationResult: calibrationResult) else {
+        if recordingArmingTracker?.isReady != true {
+            recordingArmingTracker?.process(latestPoseFrame)
+        }
+
+        guard recordingArmingTracker?.isReady == true else {
             recordingState = .waitingForStartPosition
             return
         }
 
-        await beginRecordingFromVerifiedStartPosition(latestPoseFrame, calibrationResult: calibrationResult)
+        await beginRecordingFromVerifiedStartPosition(calibrationResult: calibrationResult)
     }
 
     private func beginRecordingFromVerifiedStartPosition(
-        _ frame: PoseFrame,
         calibrationResult: CalibrationResult
     ) async {
+        guard let startFrames = recordingArmingTracker?.stableFramesForRecording,
+              let firstFrame = startFrames.first else {
+            recordingState = .waitingForStartPosition
+            return
+        }
+
         do {
             try await poseRecordingService.start(
                 calibrationResult: calibrationResult,
-                startTimestampSeconds: frame.timestampSeconds,
+                startTimestampSeconds: firstFrame.timestampSeconds,
                 metadata: PoseRecordingMetadata(
                     cameraPosition: selectedCameraPosition.rawValue,
                     nominalCaptureFPS: nil
                 )
             )
-            recordingStartTimestampSeconds = frame.timestampSeconds
+            for frame in startFrames {
+                try await poseRecordingService.accept(frame)
+            }
+            recordingArmingTracker = nil
+            recordingStartTimestampSeconds = firstFrame.timestampSeconds
             recordingState = .recording(elapsedSeconds: 0)
         } catch let error as PoseRecordingError {
             recordingState = .failed(error)
         } catch {
             recordingState = .failed(.alreadyRecording)
         }
-    }
-
-    private func isAcceptableStartPosition(_ frame: PoseFrame, calibrationResult: CalibrationResult) -> Bool {
-        maximumBaselineDistance(frame, calibrationResult: calibrationResult) <= calibrationConfiguration.stabilityMovementThreshold
-    }
-
-    private func maximumBaselineDistance(_ frame: PoseFrame, calibrationResult: CalibrationResult) -> Double {
-        var distances: [Double] = []
-
-        for jointID in PoseJointID.fullBodyCalibrationRequired {
-            guard
-                let current = frame.sample(for: jointID),
-                current.confidence >= calibrationConfiguration.minimumRequiredJointConfidence,
-                let baseline = calibrationResult.baselinePose.joints[jointID],
-                baseline.confidence >= calibrationConfiguration.minimumRequiredJointConfidence
-            else {
-                return .infinity
-            }
-
-            distances.append(hypot(current.x - baseline.x, current.y - baseline.y))
-        }
-
-        return distances.max() ?? .infinity
     }
 
     private func acceptRecordingFrame(_ frame: PoseFrame) async {
@@ -448,5 +456,134 @@ public final class CameraFlowViewModel: ObservableObject {
         case .runtimeFailure:
             return .runtimeFailure
         }
+    }
+}
+
+private struct RecordingArmingTracker {
+    private let calibrationResult: CalibrationResult
+    private let calibrationConfiguration: CalibrationConfiguration
+    private let readinessConfiguration: AnalysisConfiguration
+    private let signalJointIDs = MovementSignalBuilder.defaultJointIDs
+    private var stableStartTimestampSeconds: Double?
+    private var previousFrame: PoseFrame?
+    private(set) var stableFramesForRecording: [PoseFrame] = []
+
+    init(
+        calibrationResult: CalibrationResult,
+        calibrationConfiguration: CalibrationConfiguration,
+        readinessConfiguration: AnalysisConfiguration
+    ) {
+        self.calibrationResult = calibrationResult
+        self.calibrationConfiguration = calibrationConfiguration
+        self.readinessConfiguration = readinessConfiguration
+    }
+
+    var isReady: Bool {
+        guard let stableStartTimestampSeconds,
+              let latestTimestamp = stableFramesForRecording.last?.timestampSeconds else {
+            return false
+        }
+
+        return latestTimestamp - stableStartTimestampSeconds >= readinessConfiguration.readyStabilityWindowSeconds
+    }
+
+    mutating func process(_ frame: PoseFrame) {
+        defer {
+            previousFrame = frame
+        }
+
+        guard requiredCalibrationJointsAreVisible(in: frame),
+              baselineDistance(for: frame) <= readinessConfiguration.resetBaselineDistanceThreshold else {
+            resetStableWindow()
+            return
+        }
+
+        guard let previousFrame else {
+            startStableWindow(with: frame)
+            return
+        }
+
+        guard let velocity = velocity(from: previousFrame, to: frame),
+              velocity <= readinessConfiguration.readyStabilityThreshold else {
+            startStableWindow(with: frame)
+            return
+        }
+
+        if stableStartTimestampSeconds == nil {
+            stableStartTimestampSeconds = frame.timestampSeconds
+            stableFramesForRecording = [frame]
+        } else {
+            stableFramesForRecording.append(frame)
+        }
+    }
+
+    private mutating func startStableWindow(with frame: PoseFrame) {
+        stableStartTimestampSeconds = frame.timestampSeconds
+        stableFramesForRecording = [frame]
+    }
+
+    private mutating func resetStableWindow() {
+        stableStartTimestampSeconds = nil
+        stableFramesForRecording = []
+    }
+
+    private func requiredCalibrationJointsAreVisible(in frame: PoseFrame) -> Bool {
+        PoseJointID.fullBodyCalibrationRequired.allSatisfy { jointID in
+            guard let sample = frame.sample(for: jointID),
+                  sample.confidence >= calibrationConfiguration.minimumRequiredJointConfidence else {
+                return false
+            }
+
+            return true
+        }
+    }
+
+    private func baselineDistance(for frame: PoseFrame) -> Double {
+        let scale = max(calibrationResult.normalizationScale, 0.0001)
+        let distances = signalJointIDs.compactMap { jointID -> Double? in
+            guard
+                let current = frame.sample(for: jointID),
+                current.confidence >= readinessConfiguration.mediumConfidenceThreshold,
+                let baseline = calibrationResult.baselinePose.joints[jointID],
+                baseline.confidence >= readinessConfiguration.mediumConfidenceThreshold
+            else {
+                return nil
+            }
+
+            return hypot(current.x - baseline.x, current.y - baseline.y) / scale
+        }
+
+        guard distances.count >= readinessConfiguration.minimumSignalJointCount else {
+            return .infinity
+        }
+
+        return distances.reduce(0, +) / Double(distances.count)
+    }
+
+    private func velocity(from previousFrame: PoseFrame, to frame: PoseFrame) -> Double? {
+        let elapsed = frame.timestampSeconds - previousFrame.timestampSeconds
+        guard elapsed > 0, elapsed <= readinessConfiguration.maximumPoseSignalGapSeconds else {
+            return nil
+        }
+
+        let scale = max(calibrationResult.normalizationScale, 0.0001)
+        let velocities = signalJointIDs.compactMap { jointID -> Double? in
+            guard
+                let previous = previousFrame.sample(for: jointID),
+                previous.confidence >= readinessConfiguration.mediumConfidenceThreshold,
+                let current = frame.sample(for: jointID),
+                current.confidence >= readinessConfiguration.mediumConfidenceThreshold
+            else {
+                return nil
+            }
+
+            return (hypot(current.x - previous.x, current.y - previous.y) / scale) / elapsed
+        }
+
+        guard velocities.count >= readinessConfiguration.minimumSignalJointCount else {
+            return nil
+        }
+
+        return velocities.reduce(0, +) / Double(velocities.count)
     }
 }

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PoseSkeletonOverlayView: View {
     let poseFrame: PoseFrame
-    private let mapper = AspectFillPoseOverlayMapper()
+    let cameraPosition: CameraPosition
 
     var body: some View {
         GeometryReader { geometry in
@@ -34,6 +34,7 @@ struct PoseSkeletonOverlayView: View {
     }
 
     private func displayPoint(for sample: JointSample, size: CGSize) -> CGPoint {
+        let mapper = AspectFillPoseOverlayMapper(isMirrored: cameraPosition == .front)
         mapper.displayPoint(for: sample, in: size)
     }
 
