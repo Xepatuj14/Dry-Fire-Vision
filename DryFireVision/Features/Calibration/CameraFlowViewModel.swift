@@ -9,6 +9,7 @@ public final class CameraFlowViewModel: ObservableObject {
     @Published public private(set) var latestPoseFrame: PoseFrame?
     @Published public private(set) var recordingState: PoseRecordingState = .awaitingCalibration
     @Published public private(set) var selectedCameraPosition: CameraPosition = .front
+    @Published public private(set) var completedValidRepCount: Int = 0
 
     private let cameraCaptureProvider: any CameraCaptureProviding
     private let applicationSettingsOpener: any ApplicationSettingsOpening
@@ -18,6 +19,7 @@ public final class CameraFlowViewModel: ObservableObject {
     private let calibrationConfiguration: CalibrationConfiguration
     private let recordingReadinessConfiguration: AnalysisConfiguration
     private let recordingConfiguration: PoseRecordingConfiguration
+    private let sessionConfiguration: DryFireSessionConfiguration
     private var calibrationEvaluator: CalibrationEvaluator
     private var poseAnalysisCadence: PoseAnalysisCadence
     private var lifecycleObservationTask: Task<Void, Never>?
@@ -26,6 +28,7 @@ public final class CameraFlowViewModel: ObservableObject {
     private var activeCalibrationResult: CalibrationResult?
     private var recordingArmingTracker: RecordingArmingTracker?
     private var recordingStartTimestampSeconds: Double?
+    private var liveRecordingFrames: [PoseFrame] = []
 
     public init(
         cameraCaptureProvider: any CameraCaptureProviding,
@@ -36,7 +39,8 @@ public final class CameraFlowViewModel: ObservableObject {
         calibrationConfiguration: CalibrationConfiguration = CalibrationConfiguration(),
         poseAnalysisCadence: PoseAnalysisCadence = PoseAnalysisCadence(),
         recordingReadinessConfiguration: AnalysisConfiguration = .provisionalSegmentationV1,
-        recordingConfiguration: PoseRecordingConfiguration = PoseRecordingConfiguration()
+        recordingConfiguration: PoseRecordingConfiguration = PoseRecordingConfiguration(),
+        sessionConfiguration: DryFireSessionConfiguration = DryFireSessionConfiguration()
     ) {
         self.cameraCaptureProvider = cameraCaptureProvider
         self.applicationSettingsOpener = applicationSettingsOpener
@@ -46,6 +50,7 @@ public final class CameraFlowViewModel: ObservableObject {
         self.calibrationConfiguration = calibrationConfiguration
         self.recordingReadinessConfiguration = recordingReadinessConfiguration
         self.recordingConfiguration = recordingConfiguration
+        self.sessionConfiguration = sessionConfiguration
         self.calibrationEvaluator = CalibrationEvaluator(configuration: calibrationConfiguration)
         self.poseAnalysisCadence = poseAnalysisCadence
     }
@@ -113,6 +118,8 @@ public final class CameraFlowViewModel: ObservableObject {
         activeCalibrationResult = nil
         recordingArmingTracker = nil
         recordingStartTimestampSeconds = nil
+        liveRecordingFrames = []
+        completedValidRepCount = 0
         selectedCameraPosition = .front
         resetCalibrationEvaluation()
     }
@@ -152,6 +159,8 @@ public final class CameraFlowViewModel: ObservableObject {
         countdownTask = nil
         await poseRecordingService.cancel()
         recordingArmingTracker = nil
+        liveRecordingFrames = []
+        completedValidRepCount = 0
         recordingState = .cancelled
     }
 
@@ -267,6 +276,8 @@ public final class CameraFlowViewModel: ObservableObject {
         activeCalibrationResult = nil
         recordingArmingTracker = nil
         recordingStartTimestampSeconds = nil
+        liveRecordingFrames = []
+        completedValidRepCount = 0
         state = .startingCamera
         resetCalibrationEvaluation()
     }
@@ -406,11 +417,14 @@ public final class CameraFlowViewModel: ObservableObject {
                     nominalCaptureFPS: nil
                 )
             )
+            recordingStartTimestampSeconds = firstFrame.timestampSeconds
+            liveRecordingFrames = []
             for frame in startFrames {
                 try await poseRecordingService.accept(frame)
+                appendLiveRecordingFrame(frame)
             }
             recordingArmingTracker = nil
-            recordingStartTimestampSeconds = firstFrame.timestampSeconds
+            completedValidRepCount = 0
             recordingState = .recording(elapsedSeconds: 0)
         } catch let error as PoseRecordingError {
             recordingState = .failed(error)
@@ -422,12 +436,71 @@ public final class CameraFlowViewModel: ObservableObject {
     private func acceptRecordingFrame(_ frame: PoseFrame) async {
         do {
             try await poseRecordingService.accept(frame)
+            appendLiveRecordingFrame(frame)
+            updateCompletedRepCount()
+            if completedValidRepCount >= sessionConfiguration.targetRepCount {
+                await completeRecording()
+                return
+            }
+
             recordingState = .recording(elapsedSeconds: max(0, frame.timestampSeconds - (recordingStartTimestampSeconds ?? frame.timestampSeconds)))
         } catch let error as PoseRecordingError {
             recordingState = .failed(error)
         } catch {
             recordingState = .failed(.notRecording)
         }
+    }
+
+    private func completeRecording() async {
+        recordingState = .completing
+
+        do {
+            let recording = try await poseRecordingService.finish()
+            recordingState = .completed(recording)
+        } catch let error as PoseRecordingError {
+            recordingState = .failed(error)
+        } catch {
+            recordingState = .failed(.notRecording)
+        }
+    }
+
+    private func appendLiveRecordingFrame(_ frame: PoseFrame) {
+        guard let recordingStartTimestampSeconds else {
+            return
+        }
+
+        let relativeTimestampSeconds = frame.timestampSeconds - recordingStartTimestampSeconds
+        liveRecordingFrames.append(PoseFrame(
+            id: frame.id,
+            timestampSeconds: relativeTimestampSeconds,
+            joints: frame.joints,
+            coordinateConventionVersion: frame.coordinateConventionVersion,
+            jointSetVersion: frame.jointSetVersion
+        ))
+    }
+
+    private func updateCompletedRepCount() {
+        guard liveRecordingFrames.count >= 2,
+              let activeCalibrationResult,
+              let recordingStartTimestampSeconds else {
+            completedValidRepCount = 0
+            return
+        }
+
+        let liveRecording = PoseRecording(
+            id: UUID(),
+            startTimestampSeconds: recordingStartTimestampSeconds,
+            endTimestampSeconds: recordingStartTimestampSeconds + (liveRecordingFrames.last?.timestampSeconds ?? 0),
+            poseFrames: liveRecordingFrames,
+            calibrationResult: activeCalibrationResult,
+            metadata: PoseRecordingMetadata(cameraPosition: selectedCameraPosition.rawValue)
+        )
+
+        guard let segmentation = try? RepSegmenter(configuration: sessionConfiguration.analysisConfiguration).segment(liveRecording) else {
+            return
+        }
+
+        completedValidRepCount = segmentation.segments.filter { $0.validity == .valid }.count
     }
 
     private func mapPoseDetectionError(_ error: PoseDetectionError) -> CalibrationFailureReason {

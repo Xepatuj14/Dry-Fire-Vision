@@ -7,6 +7,8 @@ struct CalibrationPreviewView: View {
     let calibrationState: CalibrationReadinessState
     let recordingState: PoseRecordingState
     let selectedCameraPosition: CameraPosition
+    let completedRepCount: Int
+    let targetRepCount: Int
     let canSwitchCamera: Bool
     let switchCameraAction: () async -> Void
     let startRecordingAction: () async -> Void
@@ -101,9 +103,15 @@ struct CalibrationPreviewView: View {
         case .waitingForStartPosition:
             Text("Return to your starting position.")
         case .recording(let elapsedSeconds):
-            HStack {
-                Label("Recording", systemImage: "record.circle.fill")
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Ready", systemImage: "record.circle.fill")
+                Text("Rep \(min(completedRepCount + 1, targetRepCount)) of \(targetRepCount)")
+                Text("Analyzing movement...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text(String(format: "%.1f s", elapsedSeconds))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             Button("Stop") {
                 Task {

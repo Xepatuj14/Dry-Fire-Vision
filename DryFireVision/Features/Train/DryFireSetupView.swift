@@ -11,6 +11,8 @@ struct DryFireSetupView: View {
     private let poseAssetStore: any PoseAssetStoring
     private let settingsStore: any SettingsStoring
     @State private var retentionPreference: VideoRetentionPreference = .keep
+    @State private var sessionLength: DryFireSessionLength = .ten
+    @State private var maximumRepWindow: DryFireMaximumRepWindow = .five
 
     init(
         cameraCaptureProvider: any CameraCaptureProviding,
@@ -37,10 +39,32 @@ struct DryFireSetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("10 Rep Analysis")
+                Text("Dry Fire Analysis")
                     .font(.title)
                     .fontWeight(.semibold)
                 Text("Place your iPhone in a stable position with your body visible. Camera access is requested only when you continue.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Picker("Session Length", selection: $sessionLength) {
+                ForEach(DryFireSessionLength.allCases, id: \.self) { length in
+                    Text(length.title).tag(length)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Session length")
+
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("Rep Window", selection: $maximumRepWindow) {
+                    ForEach(DryFireMaximumRepWindow.allCases, id: \.self) { window in
+                        Text(window.title).tag(window)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityLabel("Rep window")
+
+                Text("Maximum time allowed for each rep")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
@@ -64,12 +88,14 @@ struct DryFireSetupView: View {
                         applicationSettingsOpener: applicationSettingsOpener,
                         poseDetector: poseDetector,
                         poseRecordingService: poseRecordingService,
-                        countdownProvider: countdownProvider
+                        countdownProvider: countdownProvider,
+                        sessionConfiguration: sessionConfiguration
                     ),
                     sessionAnalyzer: sessionAnalyzer,
                     sessionRepository: sessionRepository,
                     poseAssetStore: poseAssetStore,
-                    videoRetentionPreference: retentionPreference
+                    videoRetentionPreference: retentionPreference,
+                    sessionConfiguration: sessionConfiguration
                 )
             } label: {
                 Label("Continue to Camera", systemImage: "camera.fill")
@@ -90,5 +116,12 @@ struct DryFireSetupView: View {
                 await settingsStore.setVideoRetentionPreference(newValue)
             }
         }
+    }
+
+    private var sessionConfiguration: DryFireSessionConfiguration {
+        DryFireSessionConfiguration(
+            sessionLength: sessionLength,
+            maximumRepWindow: maximumRepWindow
+        )
     }
 }

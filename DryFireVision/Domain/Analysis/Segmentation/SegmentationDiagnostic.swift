@@ -7,6 +7,7 @@ public enum SegmentationDiagnosticEvent: String, Codable, Equatable, Sendable {
     case falseStartRejected
     case repCompleted
     case repDurationRejected
+    case repWindowExceeded
     case poseSignalUnavailable
     case resetConfirmed
 }

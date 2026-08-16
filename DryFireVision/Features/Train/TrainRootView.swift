@@ -46,7 +46,7 @@ public struct TrainRootView: View {
                     Text("Dry Fire Vision")
                         .font(.largeTitle)
                         .fontWeight(.bold)
-                    Text("Run your first 10-rep analysis to establish a baseline.")
+                    Text("Run a Dry Fire analysis to establish a baseline.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }

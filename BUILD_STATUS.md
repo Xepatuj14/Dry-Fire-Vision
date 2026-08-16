@@ -4,6 +4,38 @@
 
 GitHub Actions Native iOS CI / TestFlight Pipeline.
 
+## Latest implementation update: Dry Fire configurable session length and rep window
+
+- Added Dry Fire setup selectors for Session Length (`5 Reps`, `10 Reps`) and Rep Window (`2 sec`, `3 sec`, `5 sec`, `10 sec`).
+- Defaults are `10 Reps` and `5 sec`.
+- Added `DryFireSessionConfiguration` as the single setup/session configuration source for `targetRepCount` and `maximumRepDurationSeconds`.
+- The selected target rep count now flows into the camera flow, processing input, analysis, results, and persisted session `targetRepCount` through the existing analysis/persistence path.
+- The selected maximum rep window now flows into segmentation through `AnalysisConfiguration.plausibleRepDurationMaximumSeconds`.
+- The selected maximum rep window is retained for historical provenance through the existing persisted `analysisConfigurationVersion` string, using a suffix such as `+repWindow5s`; no persistence schema migration was added.
+- Current continuous-timer root cause confirmed: live recording was only accepting pose frames and displaying overall elapsed recording time; rep segmentation and target-rep evaluation were deferred until manual Stop/processing, and `CameraFlowView` hard-coded `targetRepCount: 10` for processing.
+- Live recording now segments accepted frames with the selected configuration and automatically finishes capture when valid accepted reps reach the configured target.
+- Timeout behavior is implemented in `MovementStateMachine`: once a confirmed active rep exceeds the configured maximum duration, that attempt is rejected as invalid with `repWindowExceeded`, the segmenter transitions to reset/recovery, and the attempt does not count toward target completion.
+- The rep window starts only after confirmed movement start (`READY -> MOVING`); it does not run during calibration, countdown, waiting for the starting stance, or Ready with no movement.
+- Timeout does not fabricate a successful fixed-duration rep. Actual completed rep duration remains the measured segment duration.
+- Manual Stop remains available as an early finish path.
+- No calibration thresholds, movement formulas, camera behavior, skeleton mirroring, Ghost Mode, Live Fire, persistence schema, or unrelated UI flows were intentionally changed.
+
+Checks run in the Windows environment:
+
+- Added configuration tests for defaults, 5/10 rep selection, and 2/3/5/10 second rep-window mapping.
+- Added movement state-machine tests for normal completion before timeout, active-rep timeout, and timeout not starting while Ready.
+- Added camera-flow tests for automatic five-rep completion, automatic ten-rep completion, and Start-button excursion longer than the rep window not creating a timeout before recording arms.
+- `git diff --check` passed.
+- `swift test --filter DryFireSessionConfigurationTests` could not run because `swift` is not available on this Windows PATH.
+- `swift test --filter MovementStateMachineTests` could not run because `swift` is not available on this Windows PATH.
+
+Native iPhone/TestFlight validation still required:
+
+- Verify 5-rep and 10-rep Dry Fire sessions automatically advance to processing/results at the selected target count.
+- Verify 2/3/5/10 second rep windows reject only active incomplete attempts and do not alter measured durations for completed reps.
+- Verify invalid/timed-out attempts do not count toward target completion.
+- Verify countdown, waiting-for-start-position, baseline locking, front/rear camera selection, and front-camera skeleton mirroring remain intact.
+
 ## Latest implementation update: Dry Fire front-camera skeleton mirroring
 
 - Fixed the front-facing camera skeleton overlay appearing horizontally reversed relative to the mirrored selfie preview.

@@ -27,13 +27,13 @@ final class RepSegmenterTests: XCTestCase {
         }
     }
 
-    func testTooLongFixtureProducesInvalidRejectedSegment() throws {
+    func testTooLongFixtureProducesRepWindowExceededRejectedSegment() throws {
         let result = try segment(.tooLong)
 
         XCTAssertEqual(result.segments.count, 0)
         XCTAssertEqual(result.rejectedSegments.count, 1)
         XCTAssertEqual(result.rejectedSegments.first?.validity, .invalid)
-        XCTAssertEqual(result.rejectedSegments.first?.diagnosticReason, .durationAboveMaximum)
+        XCTAssertEqual(result.rejectedSegments.first?.diagnosticReason, .repWindowExceeded)
         XCTAssertEqual(result.status, .degraded)
     }
 

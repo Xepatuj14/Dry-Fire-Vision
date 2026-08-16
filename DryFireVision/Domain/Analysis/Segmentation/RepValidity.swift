@@ -17,6 +17,7 @@ public enum SegmentationReason: String, Codable, Equatable, Sendable {
     case poseSignalUnavailable
     case falseStartRejected
     case incompleteOpenRepetition
+    case repWindowExceeded
 }
 
 public enum SegmentationStatus: String, Codable, Equatable, Sendable {

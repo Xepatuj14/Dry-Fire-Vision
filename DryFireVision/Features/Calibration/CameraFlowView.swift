@@ -6,6 +6,7 @@ struct CameraFlowView: View {
     private let sessionRepository: any SessionRepository
     private let poseAssetStore: any PoseAssetStoring
     private let videoRetentionPreference: VideoRetentionPreference
+    private let sessionConfiguration: DryFireSessionConfiguration
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
@@ -14,13 +15,15 @@ struct CameraFlowView: View {
         sessionAnalyzer: any SessionAnalyzing,
         sessionRepository: any SessionRepository,
         poseAssetStore: any PoseAssetStoring,
-        videoRetentionPreference: VideoRetentionPreference
+        videoRetentionPreference: VideoRetentionPreference,
+        sessionConfiguration: DryFireSessionConfiguration = DryFireSessionConfiguration()
     ) {
         self._viewModel = StateObject(wrappedValue: viewModel)
         self.sessionAnalyzer = sessionAnalyzer
         self.sessionRepository = sessionRepository
         self.poseAssetStore = poseAssetStore
         self.videoRetentionPreference = videoRetentionPreference
+        self.sessionConfiguration = sessionConfiguration
     }
 
     var body: some View {
@@ -84,7 +87,11 @@ struct CameraFlowView: View {
                         sessionAnalyzer: sessionAnalyzer,
                         sessionRepository: sessionRepository,
                         videoRetentionPreference: videoRetentionPreference,
-                        input: AnalysisInput(recording: recording, targetRepCount: 10)
+                        input: AnalysisInput(
+                            recording: recording,
+                            targetRepCount: sessionConfiguration.targetRepCount,
+                            configuration: sessionConfiguration.analysisConfiguration
+                        )
                     ),
                     sessionRepository: sessionRepository,
                     poseAssetStore: poseAssetStore
@@ -96,6 +103,8 @@ struct CameraFlowView: View {
                     calibrationState: viewModel.calibrationState,
                     recordingState: viewModel.recordingState,
                     selectedCameraPosition: viewModel.selectedCameraPosition,
+                    completedRepCount: viewModel.completedValidRepCount,
+                    targetRepCount: sessionConfiguration.targetRepCount,
                     canSwitchCamera: viewModel.canSwitchCamera,
                     switchCameraAction: {
                         await viewModel.switchCamera()

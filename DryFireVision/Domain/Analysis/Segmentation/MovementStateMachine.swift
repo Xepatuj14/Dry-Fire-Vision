@@ -63,8 +63,14 @@ private struct Engine {
         case .ready:
             processReady(sample: sample, velocity: velocity)
         case .moving:
+            if rejectRepWindowIfNeeded(sample: sample, velocity: velocity) {
+                return
+            }
             processMoving(sample: sample, velocity: velocity)
         case .settling:
+            if rejectRepWindowIfNeeded(sample: sample, velocity: velocity) {
+                return
+            }
             processSettling(sample: sample, velocity: velocity)
         case .complete:
             transition(to: .resetting, sample: sample, threshold: configuration.resetBaselineDistanceThreshold)
@@ -235,6 +241,40 @@ private struct Engine {
         } else {
             settleStartTimestamp = nil
         }
+    }
+
+    mutating private func rejectRepWindowIfNeeded(sample: MovementSignalSample, velocity: Double) -> Bool {
+        guard let repStart = currentRepStartTimestamp,
+              sample.timestampSeconds - repStart + timeComparisonTolerance >= configuration.plausibleRepDurationMaximumSeconds else {
+            return false
+        }
+
+        let segment = makeSegment(
+            start: repStart,
+            activeEnd: activeMovementEndTimestamp,
+            complete: sample.timestampSeconds,
+            sequenceIndex: segments.count + rejectedSegments.count,
+            forcedReason: .repWindowExceeded
+        )
+        rejectedSegments.append(segment)
+        appendFailure(.repWindowExceeded)
+        diagnostics.append(SegmentationDiagnostic(
+            event: .repWindowExceeded,
+            timestampSeconds: sample.timestampSeconds,
+            fromState: state,
+            toState: .resetting,
+            movementSignal: velocity,
+            baselineDistance: sample.baselineDistance,
+            threshold: configuration.plausibleRepDurationMaximumSeconds,
+            reason: .repWindowExceeded
+        ))
+        transition(to: .resetting, sample: sample, threshold: configuration.resetBaselineDistanceThreshold)
+        currentRepStartTimestamp = nil
+        activeMovementEndTimestamp = nil
+        settleStartTimestamp = nil
+        resetStartTimestamp = nil
+        startCandidateTimestamp = nil
+        return true
     }
 
     mutating private func processResetting(sample: MovementSignalSample, velocity: Double) {
