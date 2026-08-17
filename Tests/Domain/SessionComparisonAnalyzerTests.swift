@@ -97,7 +97,18 @@ final class SessionComparisonAnalyzerTests: XCTestCase {
             .analyze(recording: fixture.recording, analyzedReps: fixture.analyzedReps)
 
         XCTAssertTrue(result.eligibleRepIDs.isEmpty)
-        XCTAssertEqual(result.diagnostics.excludedRepReasons[fixture.analyzedReps[0].id], .primaryWristUnavailable)
+        XCTAssertEqual(result.diagnostics.excludedRepReasons[fixture.analyzedReps[0].id], .missingPrimaryWristConfiguration)
         XCTAssertEqual(result.consistency.availability, .unavailable)
+        XCTAssertEqual(result.consistency.reason, .missingPrimaryWristConfiguration)
+    }
+
+    func testStandardDryFireConfigurationProducesAvailableConsistency() {
+        let fixture = ComparisonSyntheticFixtures.session(.identical10)
+        let result = SessionComparisonAnalyzer(configuration: DryFireSessionConfiguration().analysisConfiguration)
+            .analyze(recording: fixture.recording, analyzedReps: fixture.analyzedReps)
+
+        XCTAssertEqual(result.consistency.availability, .available)
+        XCTAssertEqual(result.diagnostics.eligibleRepCount, 10)
+        XCTAssertEqual(result.consistency.internalValue ?? 0, 1, accuracy: ComparisonGoldenFixtures.tolerance)
     }
 }

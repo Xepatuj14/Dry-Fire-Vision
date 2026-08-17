@@ -46,6 +46,20 @@ final class SessionAnalysisPipelineTests: XCTestCase {
         XCTAssertEqual(first, second)
     }
 
+    func testStandardDryFireSessionConfigurationProducesMovementConsistency() async throws {
+        let configuration = DryFireSessionConfiguration()
+        let input = AnalysisInput(
+            recording: SessionAnalysisFixtureFactory.recording(.good10),
+            targetRepCount: configuration.targetRepCount,
+            configuration: configuration.analysisConfiguration
+        )
+
+        let analysis = try await SessionAnalysisPipeline().analyze(input)
+
+        XCTAssertEqual(analysis.movementConsistency.availability, .available)
+        XCTAssertEqual(analysis.movementConsistency.reason, .none)
+    }
+
     func testInvalidCalibrationFailsConservatively() async {
         let recording = recordingWithInvalidScale(SessionAnalysisFixtureFactory.recording(.good10))
         let input = AnalysisInput(recording: recording, configuration: .resultsFixtureConfiguration)

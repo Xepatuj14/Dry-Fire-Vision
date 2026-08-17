@@ -148,4 +148,58 @@ public struct AnalysisConfiguration: Codable, Equatable, Sendable {
     }
 
     public static let provisionalSegmentationV1 = AnalysisConfiguration()
+    public static let dryFireV1 = AnalysisConfiguration(primaryWristJointID: .rightWrist)
+
+    public func replacing(
+        version: String = VersionCatalog.current.analysisConfigurationVersion,
+        plausibleRepDurationMaximumSeconds: Double
+    ) -> AnalysisConfiguration {
+        AnalysisConfiguration(
+            version: version,
+            lowConfidenceThreshold: lowConfidenceThreshold,
+            mediumConfidenceThreshold: mediumConfidenceThreshold,
+            highConfidenceThreshold: highConfidenceThreshold,
+            maximumInterpolationGapSeconds: maximumInterpolationGapSeconds,
+            smoothingAlpha: smoothingAlpha,
+            readyStabilityThreshold: readyStabilityThreshold,
+            readyStabilityWindowSeconds: readyStabilityWindowSeconds,
+            movementStartThreshold: movementStartThreshold,
+            movementStartConfirmationWindowSeconds: movementStartConfirmationWindowSeconds,
+            activeMovementThreshold: activeMovementThreshold,
+            settleThreshold: settleThreshold,
+            settleWindowSeconds: settleWindowSeconds,
+            resetBaselineDistanceThreshold: resetBaselineDistanceThreshold,
+            resetStabilityWindowSeconds: resetStabilityWindowSeconds,
+            plausibleRepDurationMinimumSeconds: plausibleRepDurationMinimumSeconds,
+            plausibleRepDurationMaximumSeconds: plausibleRepDurationMaximumSeconds,
+            minimumSignalJointCount: minimumSignalJointCount,
+            maximumPoseSignalGapSeconds: maximumPoseSignalGapSeconds,
+            minimumHeadMetricCoverage: minimumHeadMetricCoverage,
+            minimumShoulderMetricCoverage: minimumShoulderMetricCoverage,
+            minimumWristMetricCoverage: minimumWristMetricCoverage,
+            maximumMetricGapSeconds: maximumMetricGapSeconds,
+            nearZeroPathLengthThreshold: nearZeroPathLengthThreshold,
+            primaryWristJointID: primaryWristJointID,
+            comparisonPhaseSampleCount: comparisonPhaseSampleCount,
+            minimumComparisonJointCoverage: minimumComparisonJointCoverage,
+            minimumUsableComparisonJoints: minimumUsableComparisonJoints,
+            comparisonJointWeights: comparisonJointWeights,
+            similarityErrorScale: similarityErrorScale,
+            minimumRepsForSessionConsistency: minimumRepsForSessionConsistency,
+            minimumRepsForOutlierDetection: minimumRepsForOutlierDetection,
+            outlierMedianAbsoluteDeviationMultiplier: outlierMedianAbsoluteDeviationMultiplier,
+            zeroDispersionThreshold: zeroDispersionThreshold,
+            liveFireAudioImpulseThreshold: liveFireAudioImpulseThreshold,
+            liveFireAudioHighConfidenceThreshold: liveFireAudioHighConfidenceThreshold,
+            liveFireAudioMediumConfidenceThreshold: liveFireAudioMediumConfidenceThreshold,
+            liveFireMinimumEventSpacingSeconds: liveFireMinimumEventSpacingSeconds,
+            liveFireDebounceWindowSeconds: liveFireDebounceWindowSeconds,
+            liveFirePreEventWindowSeconds: liveFirePreEventWindowSeconds,
+            liveFirePostEventWindowSeconds: liveFirePostEventWindowSeconds,
+            liveFireRecoveryTolerance: liveFireRecoveryTolerance,
+            liveFireRecoveryDwellSeconds: liveFireRecoveryDwellSeconds,
+            liveFireMinimumPoseCoverage: liveFireMinimumPoseCoverage,
+            liveFireMaximumPoseGapSeconds: liveFireMaximumPoseGapSeconds
+        )
+    }
 }

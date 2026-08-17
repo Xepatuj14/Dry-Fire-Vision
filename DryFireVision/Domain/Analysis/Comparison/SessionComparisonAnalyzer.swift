@@ -31,7 +31,7 @@ public struct SessionComparisonAnalyzer: Sendable {
 
         let aligned = Dictionary(uniqueKeysWithValues: eligible.compactMap { rep -> (UUID, PhaseAlignedRep)? in
             guard let aligned = phaseNormalizer.align(analyzedRep: rep, recording: recording) else {
-                excluded[rep.id] = configuration.primaryWristJointID == nil ? .primaryWristUnavailable : .invalidNormalizationScale
+                excluded[rep.id] = configuration.primaryWristJointID == nil ? .missingPrimaryWristConfiguration : .invalidNormalizationScale
                 return nil
             }
             return (rep.id, aligned)
@@ -162,6 +162,15 @@ public struct SessionComparisonAnalyzer: Sendable {
         representative: UUID?,
         comparisons: [UUID: RepComparisonResult]
     ) -> SessionConsistencyResult {
+        guard configuration.primaryWristJointID != nil else {
+            return SessionConsistencyResult(
+                availability: .unavailable,
+                internalValue: nil,
+                confidence: .low,
+                reason: .missingPrimaryWristConfiguration
+            )
+        }
+
         guard representative != nil,
               eligibleIDs.count >= configuration.minimumRepsForSessionConsistency else {
             return SessionConsistencyResult(

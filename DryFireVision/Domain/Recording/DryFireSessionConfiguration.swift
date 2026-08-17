@@ -41,7 +41,7 @@ public struct DryFireSessionConfiguration: Equatable, Sendable {
     }
 
     public var analysisConfiguration: AnalysisConfiguration {
-        AnalysisConfiguration(
+        AnalysisConfiguration.dryFireV1.replacing(
             version: "\(VersionCatalog.current.analysisConfigurationVersion)+repWindow\(Int(maximumRepDurationSeconds))s",
             plausibleRepDurationMaximumSeconds: maximumRepDurationSeconds
         )

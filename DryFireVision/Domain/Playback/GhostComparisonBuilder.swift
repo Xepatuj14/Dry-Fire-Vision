@@ -117,7 +117,7 @@ public struct GhostComparisonBuilder: Sendable {
             return .invalidRep
         case .invalidNormalizationScale:
             return .invalidNormalizationScale
-        case .primaryWristUnavailable:
+        case .missingPrimaryWristConfiguration, .primaryWristUnavailable:
             return .primaryWristUnavailable
         case .insufficientJointCoverage:
             return .insufficientJointCoverage

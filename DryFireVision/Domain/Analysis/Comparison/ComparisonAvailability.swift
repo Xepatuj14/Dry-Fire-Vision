@@ -12,6 +12,7 @@ public enum ComparisonUnavailableReason: String, Codable, Equatable, Sendable {
     case incompatibleJointSet
     case invalidRep
     case invalidNormalizationScale
+    case missingPrimaryWristConfiguration
     case primaryWristUnavailable
     case insufficientJointCoverage
     case insufficientUsableJoints

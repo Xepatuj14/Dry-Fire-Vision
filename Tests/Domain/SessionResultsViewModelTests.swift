@@ -34,6 +34,25 @@ final class SessionResultsViewModelTests: XCTestCase {
         XCTAssertEqual(state.movementConsistencyText, "Insufficient Data")
     }
 
+    func testMissingComparisonConfigurationMapsToUnavailableText() async throws {
+        let analysis = SessionAnalysis(
+            sessionID: UUID(),
+            mode: .dryFire,
+            analysisVersion: VersionCatalog.current.analysisVersion,
+            analysisConfigurationVersion: VersionCatalog.current.analysisConfigurationVersion,
+            targetRepCount: 10,
+            actualSegmentedRepCount: 0,
+            validRepCount: 10,
+            movementConsistency: .unavailable(reason: .missingPrimaryWristConfiguration),
+            overallConfidence: .low,
+            status: .degraded,
+            reasons: [.comparisonUnavailable]
+        )
+        let state = SessionResultsViewModel(analysis: analysis).state
+
+        XCTAssertEqual(state.movementConsistencyText, "Consistency Unavailable")
+    }
+
     func testOutlierRowsMapFromDomainIDs() async throws {
         let analysis = try await analyze(.oneOutlier)
         let state = SessionResultsViewModel(analysis: analysis).state

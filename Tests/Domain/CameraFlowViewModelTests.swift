@@ -518,7 +518,7 @@ final class CameraFlowViewModelTests: XCTestCase {
             calibrationConfiguration: CalibrationConfiguration(stabilityWindowSeconds: 0.2, minimumBaselineSamples: 3),
             poseAnalysisCadence: PoseAnalysisCadence(minimumIntervalSeconds: 0),
             recordingReadinessConfiguration: .fixtureTestConfiguration,
-            recordingConfiguration: PoseRecordingConfiguration(countdownSeconds: 3),
+            recordingConfiguration: PoseRecordingConfiguration(countdownSeconds: 3, finalRepCompletionBufferSeconds: 0),
             sessionConfiguration: sessionConfiguration
         )
 
@@ -534,7 +534,7 @@ final class CameraFlowViewModelTests: XCTestCase {
             await Task.yield()
         }
 
-        guard case .completed(let recording) = viewModel.recordingState else {
+        guard let recording = await completedRecording(from: viewModel) else {
             return XCTFail("Expected automatic completion after five valid reps, got \(viewModel.recordingState)")
         }
 
@@ -557,7 +557,7 @@ final class CameraFlowViewModelTests: XCTestCase {
             calibrationConfiguration: CalibrationConfiguration(stabilityWindowSeconds: 0.2, minimumBaselineSamples: 3),
             poseAnalysisCadence: PoseAnalysisCadence(minimumIntervalSeconds: 0),
             recordingReadinessConfiguration: .fixtureTestConfiguration,
-            recordingConfiguration: PoseRecordingConfiguration(countdownSeconds: 3),
+            recordingConfiguration: PoseRecordingConfiguration(countdownSeconds: 3, finalRepCompletionBufferSeconds: 0),
             sessionConfiguration: sessionConfiguration
         )
 
@@ -569,13 +569,174 @@ final class CameraFlowViewModelTests: XCTestCase {
             await Task.yield()
         }
 
-        guard case .completed(let recording) = viewModel.recordingState else {
+        guard let recording = await completedRecording(from: viewModel) else {
             return XCTFail("Expected automatic completion after ten valid reps, got \(viewModel.recordingState)")
         }
 
         let result = try RepSegmenter(configuration: sessionConfiguration.analysisConfiguration).segment(recording)
         XCTAssertEqual(viewModel.completedValidRepCount, 10)
         XCTAssertEqual(result.segments.count, 10)
+    }
+
+    func testFinalRepBufferStartsOnlyAfterRepCompletes() async {
+        let camera = FakeCameraCaptureProvider(authorizationStatus: .authorized)
+        let poseDetector = FakePoseDetector()
+        let countdown = ManualCountdownProvider()
+        let viewModel = CameraFlowViewModel(
+            cameraCaptureProvider: camera,
+            applicationSettingsOpener: FakeSettingsOpener(),
+            poseDetector: poseDetector,
+            poseRecordingService: PoseRecordingService(),
+            countdownProvider: countdown,
+            calibrationConfiguration: CalibrationConfiguration(stabilityWindowSeconds: 0.2, minimumBaselineSamples: 3),
+            poseAnalysisCadence: PoseAnalysisCadence(minimumIntervalSeconds: 0),
+            recordingReadinessConfiguration: .fixtureTestConfiguration,
+            recordingConfiguration: PoseRecordingConfiguration(countdownSeconds: 3, finalRepCompletionBufferSeconds: 100),
+            sessionConfiguration: DryFireSessionConfiguration(sessionLength: .five, maximumRepWindow: .ten)
+        )
+
+        await armRecording(viewModel: viewModel, camera: camera, poseDetector: poseDetector, countdown: countdown)
+        for frame in repeatedRepFrames(start: 0.95, count: 4) + incompleteMovingRepFrames(start: 4.2, durationSeconds: 2.0) {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        if case .recording = viewModel.recordingState {
+            XCTAssertEqual(viewModel.completedValidRepCount, 4)
+        } else {
+            XCTFail("Expected recording to remain active before final rep completes, got \(viewModel.recordingState)")
+        }
+
+        for frame in completeRepFromActiveMovementFrames(start: 6.25) {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        XCTAssertEqual(viewModel.recordingState, .finishingSession)
+        XCTAssertEqual(viewModel.completedValidRepCount, 5)
+    }
+
+    func testInvalidTimedOutAttemptDoesNotSatisfyTargetUntilAdditionalValidRepCompletes() async {
+        let camera = FakeCameraCaptureProvider(authorizationStatus: .authorized)
+        let poseDetector = FakePoseDetector()
+        let countdown = ManualCountdownProvider()
+        let viewModel = CameraFlowViewModel(
+            cameraCaptureProvider: camera,
+            applicationSettingsOpener: FakeSettingsOpener(),
+            poseDetector: poseDetector,
+            poseRecordingService: PoseRecordingService(),
+            countdownProvider: countdown,
+            calibrationConfiguration: CalibrationConfiguration(stabilityWindowSeconds: 0.2, minimumBaselineSamples: 3),
+            poseAnalysisCadence: PoseAnalysisCadence(minimumIntervalSeconds: 0),
+            recordingReadinessConfiguration: .fixtureTestConfiguration,
+            recordingConfiguration: PoseRecordingConfiguration(countdownSeconds: 3, finalRepCompletionBufferSeconds: 100),
+            sessionConfiguration: DryFireSessionConfiguration(sessionLength: .five, maximumRepWindow: .two)
+        )
+
+        await armRecording(viewModel: viewModel, camera: camera, poseDetector: poseDetector, countdown: countdown)
+        let frames = repeatedRepFrames(start: 0.95, count: 4)
+            + incompleteMovingRepFrames(start: 4.2, durationSeconds: 2.2)
+            + stableReturnFrames(start: 6.45, count: 6)
+        for frame in frames {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        if case .recording = viewModel.recordingState {
+            XCTAssertEqual(viewModel.completedValidRepCount, 4)
+        } else {
+            XCTFail("Expected recording to remain active after invalid timeout attempt, got \(viewModel.recordingState)")
+        }
+
+        for frame in repWithResetFrames(start: 7.1) {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        XCTAssertEqual(viewModel.recordingState, .finishingSession)
+        XCTAssertEqual(viewModel.completedValidRepCount, 5)
+    }
+
+    func testNoNextRepIsAcceptedDuringFinalBuffer() async {
+        let camera = FakeCameraCaptureProvider(authorizationStatus: .authorized)
+        let poseDetector = FakePoseDetector()
+        let countdown = ManualCountdownProvider()
+        let viewModel = CameraFlowViewModel(
+            cameraCaptureProvider: camera,
+            applicationSettingsOpener: FakeSettingsOpener(),
+            poseDetector: poseDetector,
+            poseRecordingService: PoseRecordingService(),
+            countdownProvider: countdown,
+            calibrationConfiguration: CalibrationConfiguration(stabilityWindowSeconds: 0.2, minimumBaselineSamples: 3),
+            poseAnalysisCadence: PoseAnalysisCadence(minimumIntervalSeconds: 0),
+            recordingReadinessConfiguration: .fixtureTestConfiguration,
+            recordingConfiguration: PoseRecordingConfiguration(countdownSeconds: 3, finalRepCompletionBufferSeconds: 100),
+            sessionConfiguration: DryFireSessionConfiguration(sessionLength: .five, maximumRepWindow: .five)
+        )
+
+        await armRecording(viewModel: viewModel, camera: camera, poseDetector: poseDetector, countdown: countdown)
+        for frame in repeatedRepFrames(start: 0.95, count: 5) {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        XCTAssertEqual(viewModel.recordingState, .finishingSession)
+        XCTAssertEqual(viewModel.completedValidRepCount, 5)
+
+        for frame in repeatedRepFrames(start: 5.2, count: 1) {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        XCTAssertEqual(viewModel.recordingState, .finishingSession)
+        XCTAssertEqual(viewModel.completedValidRepCount, 5)
+    }
+
+    func testCompletedSessionIgnoresRepeatedFinalRepCallbacks() async {
+        let camera = FakeCameraCaptureProvider(authorizationStatus: .authorized)
+        let poseDetector = FakePoseDetector()
+        let countdown = ManualCountdownProvider()
+        let viewModel = CameraFlowViewModel(
+            cameraCaptureProvider: camera,
+            applicationSettingsOpener: FakeSettingsOpener(),
+            poseDetector: poseDetector,
+            poseRecordingService: PoseRecordingService(),
+            countdownProvider: countdown,
+            calibrationConfiguration: CalibrationConfiguration(stabilityWindowSeconds: 0.2, minimumBaselineSamples: 3),
+            poseAnalysisCadence: PoseAnalysisCadence(minimumIntervalSeconds: 0),
+            recordingReadinessConfiguration: .fixtureTestConfiguration,
+            recordingConfiguration: PoseRecordingConfiguration(countdownSeconds: 3, finalRepCompletionBufferSeconds: 0),
+            sessionConfiguration: DryFireSessionConfiguration(sessionLength: .five, maximumRepWindow: .five)
+        )
+
+        await armRecording(viewModel: viewModel, camera: camera, poseDetector: poseDetector, countdown: countdown)
+        for frame in repeatedRepFrames(start: 0.95, count: 5) {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        guard let completed = await completedRecording(from: viewModel) else {
+            return XCTFail("Expected completed recording, got \(viewModel.recordingState)")
+        }
+
+        for frame in repeatedRepFrames(start: 5.2, count: 1) {
+            poseDetector.nextResult = PoseDetectionResult(poseFrames: [frame])
+            camera.emitFrame(CameraFrame(timestampSeconds: frame.timestampSeconds))
+            await Task.yield()
+        }
+
+        guard case .completed(let afterExtraCallbacks) = viewModel.recordingState else {
+            return XCTFail("Expected completed state to remain stable, got \(viewModel.recordingState)")
+        }
+        XCTAssertEqual(afterExtraCallbacks.id, completed.id)
+        XCTAssertEqual(viewModel.completedValidRepCount, 5)
     }
 
     func testStartButtonExcursionLongerThanRepWindowDoesNotCreateTimeoutBeforeRecordingArms() async {
@@ -689,6 +850,43 @@ private func repWithResetFrames(start: Double) -> [PoseFrame] {
     return offsets.enumerated().map { index, offset in
         offsetPose(timestampSeconds: start + Double(index) * 0.05, xOffset: offset)
     }
+}
+
+private func incompleteMovingRepFrames(start: Double, durationSeconds: Double) -> [PoseFrame] {
+    var frames: [PoseFrame] = []
+    var timestamp = start
+    let offsets = [0.04, 0.08, 0.12]
+    for offset in offsets {
+        frames.append(offsetPose(timestampSeconds: timestamp, xOffset: offset))
+        timestamp += 0.05
+    }
+
+    while timestamp <= start + durationSeconds {
+        frames.append(offsetPose(timestampSeconds: timestamp, xOffset: 0.18))
+        timestamp += 0.05
+    }
+    return frames
+}
+
+private func completeRepFromActiveMovementFrames(start: Double) -> [PoseFrame] {
+    let offsets = [0.08, 0.04, 0.0, 0.0, 0.0, 0.0, 0.0]
+    return offsets.enumerated().map { index, offset in
+        offsetPose(timestampSeconds: start + Double(index) * 0.05, xOffset: offset)
+    }
+}
+
+private func completedRecording(from viewModel: CameraFlowViewModel) async -> PoseRecording? {
+    for _ in 0..<20 {
+        if case .completed(let recording) = viewModel.recordingState {
+            return recording
+        }
+        await Task.yield()
+    }
+
+    if case .completed(let recording) = viewModel.recordingState {
+        return recording
+    }
+    return nil
 }
 
 private func armRecording(

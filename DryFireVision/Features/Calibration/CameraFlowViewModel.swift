@@ -29,6 +29,7 @@ public final class CameraFlowViewModel: ObservableObject {
     private var recordingArmingTracker: RecordingArmingTracker?
     private var recordingStartTimestampSeconds: Double?
     private var liveRecordingFrames: [PoseFrame] = []
+    private var finalRepCompletionTask: Task<Void, Never>?
 
     public init(
         cameraCaptureProvider: any CameraCaptureProviding,
@@ -109,6 +110,8 @@ public final class CameraFlowViewModel: ObservableObject {
         poseObservationTask = nil
         countdownTask?.cancel()
         countdownTask = nil
+        finalRepCompletionTask?.cancel()
+        finalRepCompletionTask = nil
         await poseRecordingService.cancel()
         await cameraCaptureProvider.stopPreview()
         previewSession = nil
@@ -157,6 +160,8 @@ public final class CameraFlowViewModel: ObservableObject {
     public func cancelRecording() async {
         countdownTask?.cancel()
         countdownTask = nil
+        finalRepCompletionTask?.cancel()
+        finalRepCompletionTask = nil
         await poseRecordingService.cancel()
         recordingArmingTracker = nil
         liveRecordingFrames = []
@@ -165,6 +170,8 @@ public final class CameraFlowViewModel: ObservableObject {
     }
 
     public func stopRecording() async {
+        finalRepCompletionTask?.cancel()
+        finalRepCompletionTask = nil
         recordingState = .completing
 
         do {
@@ -278,6 +285,8 @@ public final class CameraFlowViewModel: ObservableObject {
         recordingStartTimestampSeconds = nil
         liveRecordingFrames = []
         completedValidRepCount = 0
+        finalRepCompletionTask?.cancel()
+        finalRepCompletionTask = nil
         state = .startingCamera
         resetCalibrationEvaluation()
     }
@@ -347,6 +356,10 @@ public final class CameraFlowViewModel: ObservableObject {
             recordingArmingTracker?.process(latestPoseFrame)
         }
 
+        if case .finishingSession = recordingState {
+            return
+        }
+
         if case .recording = recordingState,
            result.poseFrames.count == 1,
            let frame = result.poseFrames.first {
@@ -369,7 +382,7 @@ public final class CameraFlowViewModel: ObservableObject {
 
     private var isRecordingOrCountdown: Bool {
         switch recordingState {
-        case .countdown, .recording:
+        case .countdown, .recording, .finishingSession:
             return true
         default:
             return false
@@ -439,7 +452,7 @@ public final class CameraFlowViewModel: ObservableObject {
             appendLiveRecordingFrame(frame)
             updateCompletedRepCount()
             if completedValidRepCount >= sessionConfiguration.targetRepCount {
-                await completeRecording()
+                beginFinalRepCompletionBuffer()
                 return
             }
 
@@ -452,6 +465,7 @@ public final class CameraFlowViewModel: ObservableObject {
     }
 
     private func completeRecording() async {
+        finalRepCompletionTask = nil
         recordingState = .completing
 
         do {
@@ -461,6 +475,27 @@ public final class CameraFlowViewModel: ObservableObject {
             recordingState = .failed(error)
         } catch {
             recordingState = .failed(.notRecording)
+        }
+    }
+
+    private func beginFinalRepCompletionBuffer() {
+        guard finalRepCompletionTask == nil else {
+            return
+        }
+
+        completedValidRepCount = sessionConfiguration.targetRepCount
+        recordingState = .finishingSession
+        let bufferSeconds = max(0, recordingConfiguration.finalRepCompletionBufferSeconds)
+        finalRepCompletionTask = Task { [weak self] in
+            let nanoseconds = UInt64((bufferSeconds * 1_000_000_000).rounded())
+            if nanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: nanoseconds)
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await self?.completeRecording()
         }
     }
 

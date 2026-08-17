@@ -125,6 +125,13 @@ struct CalibrationPreviewView: View {
                 }
             }
             .buttonStyle(.bordered)
+        case .finishingSession:
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Session Complete", systemImage: "checkmark.circle.fill")
+                Text("Finishing analysis...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         case .completing:
             Text("Completing recording.")
         case .completed(let recording):

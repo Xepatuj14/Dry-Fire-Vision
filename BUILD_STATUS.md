@@ -4,6 +4,58 @@
 
 GitHub Actions Native iOS CI / TestFlight Pipeline.
 
+## Latest implementation update: Dry Fire Movement Consistency primary-wrist config
+
+- Fixed Movement Consistency showing `Insufficient Data` for otherwise valid Dry Fire sessions because the configurable session path rebuilt `AnalysisConfiguration` without `primaryWristJointID`.
+- The canonical Dry Fire V1 primary wrist is `.rightWrist`, matching existing comparison fixtures, metric fixtures, Rep Review expectations, and Ghost Mode V1.
+- Added `AnalysisConfiguration.dryFireV1` as the centralized standard Dry Fire analysis configuration with `.rightWrist`.
+- `DryFireSessionConfiguration.analysisConfiguration` now starts from `AnalysisConfiguration.dryFireV1` and overrides only the selected maximum rep-window duration plus version suffix, preserving comparison fields and thresholds.
+- Added bounded comparison unavailable reason `missingPrimaryWristConfiguration` so missing comparison configuration is no longer indistinguishable from genuine insufficient user data.
+- Results text still shows normal insufficient-data cases as `Insufficient Data`, but internal/configuration comparison failures now show `Consistency Unavailable`.
+- Ghost Mode maps the new bounded reason to its existing primary-wrist-unavailable state without changing Ghost comparison behavior.
+- No similarity formulas, comparison thresholds, calibration behavior, camera behavior, persistence schema, or handedness UI were changed.
+
+Checks run in the Windows environment:
+
+- Added/updated tests for standard Dry Fire config carrying `.rightWrist`, rep-window overrides preserving canonical comparison config, session length not affecting comparison config, comparison joint set availability, valid fixtures producing available Movement Consistency, and missing primary wrist reporting `missingPrimaryWristConfiguration`.
+- Added a pipeline-level regression proving `DryFireSessionConfiguration` produces available Movement Consistency on the existing good 10-rep fixture.
+- `git diff --check` passed.
+- `swift test --filter DryFireSessionConfigurationTests` could not run because `swift` is not available on this Windows PATH.
+- `swift test --filter SessionComparisonAnalyzerTests` could not run because `swift` is not available on this Windows PATH.
+
+Native iPhone/TestFlight validation still required:
+
+- Complete 5-rep and 10-rep Dry Fire sessions and confirm Movement Consistency is available for normal valid sessions.
+- Confirm low-quality/occluded sessions still show conservative insufficient-data states rather than fabricated consistency.
+- Confirm final-rep auto-end, rep windows, calibration Ready behavior, front/rear camera behavior, and front-camera mirroring remain intact.
+
+## Latest implementation update: Dry Fire final-rep auto-end buffer
+
+- Added an explicit post-target `finishingSession` recording state for Dry Fire sessions.
+- Automatic target-rep completion is detected in `CameraFlowViewModel` after live segmentation reports `completedValidRepCount >= targetRepCount`.
+- The final-rep completion buffer is centralized as `PoseRecordingConfiguration.finalRepCompletionBufferSeconds`, defaulting to `1.5` seconds.
+- The final buffer starts only after a valid accepted rep has reached segmentation completion and the target count is satisfied.
+- During the final buffer, the UI shows "Session Complete" / "Finishing analysis..." and the rep counter remains bounded at the configured target.
+- During `finishingSession`, incoming pose callbacks are not accepted into live segmentation, so Rep 6 of 5 / Rep 11 of 10 cannot arm or increment the accepted count.
+- Invalid/timed-out attempts remain rejected by existing `RepValidity`/segmentation rules and do not count toward target completion.
+- Finalization is idempotent through a single `finalRepCompletionTask`; repeated target callbacks after the state changes cannot schedule another finish.
+- Manual Stop still uses the existing safe `PoseRecordingService.finish()` path and cancels any pending final-buffer task.
+- No calibration thresholds, movement metric formulas, camera behavior, front-camera mirroring, persistence schema, or unrelated flows were changed.
+
+Checks run in the Windows environment:
+
+- Added camera-flow tests for final buffer starting only after final rep completion, invalid timeout attempts not satisfying target, no next rep during final buffer, and repeated callbacks after completion leaving the completed recording stable.
+- Updated 5-rep and 10-rep automatic completion tests to exercise the configurable final buffer.
+- `git diff --check` passed.
+- `swift test --filter CameraFlowViewModelTests` could not run because `swift` is not available on this Windows PATH.
+
+Native iPhone/TestFlight validation still required:
+
+- Complete 5-rep and 10-rep Dry Fire sessions and confirm the app enters finishing immediately after the final accepted rep completes, waits about 1.5 seconds, then advances to Processing/Results.
+- Confirm invalid/timed-out attempts do not end the session early.
+- Confirm moving during the final buffer does not arm or record an extra rep.
+- Confirm interruption/background handling during the final buffer follows the existing safe interruption/finalization behavior.
+
 ## Latest implementation update: Dry Fire configurable session length and rep window
 
 - Added Dry Fire setup selectors for Session Length (`5 Reps`, `10 Reps`) and Rep Window (`2 sec`, `3 sec`, `5 sec`, `10 sec`).

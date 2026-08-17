@@ -127,7 +127,16 @@ public struct SessionResultsViewModel: Equatable, Sendable {
     }
 
     private static func movementConsistencyText(_ consistency: SessionConsistencyResult) -> String {
-        consistency.availability == .available ? "Available" : "Insufficient Data"
+        if consistency.availability == .available {
+            return "Available"
+        }
+
+        switch consistency.reason {
+        case .missingPrimaryWristConfiguration, .primaryWristUnavailable, .invalidNormalizationScale, .incompatibleAnalysisVersion, .incompatibleCoordinateConvention, .incompatibleJointSet, .nonFiniteInput:
+            return "Consistency Unavailable"
+        case .none, .invalidRep, .insufficientJointCoverage, .insufficientUsableJoints, .insufficientEligibleReps, .zeroDispersion:
+            return "Insufficient Data"
+        }
     }
 
     private static func validityText(_ validity: RepValidity) -> String {
